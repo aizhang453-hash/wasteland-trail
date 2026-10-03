@@ -284,6 +284,45 @@ def show_status(game):
         print("车上带着: 种子库的种子")
 
 
+def health_bar(h):
+    """把健康画成一条, 比如 72 -> [#######...]"""
+    filled = round(h / 10)
+    return "[" + "#" * filled + "." * (10 - filled) + "]"
+
+
+def show_party(game):
+    """查看队伍: 每个人的详细情况, 还有物资大概能撑多久。不花时间"""
+    print("\n========== 队伍状态 ==========")
+    for name, h in game["party"].items():
+        tags = []
+        if name == game["leader"]:
+            tags.append("主角")
+        if name in game["jobs"]:
+            tags.append(game["jobs"][name])
+        tag = f" ({'、'.join(tags)})" if tags else ""
+        print(f"{name}{tag}  健康 {h} {health_word(h)}  {health_bar(h)}")
+        if name in game["jobs"]:
+            print(f"    特长: {SKILLS[game['jobs'][name]]}")
+    average = sum(game["party"].values()) // len(game["party"])
+    print(f"队伍整体: {health_word(average)} (平均健康 {average})")
+    if game["dead"]:
+        print(f"路上失去的人: {'、'.join(game['dead'])}")
+
+    print("\n---------- 物资还能撑多久 ----------")
+    s = game["supplies"]
+    people = len(game["party"])
+    ration_name, per_person, _ = RATIONS[game["ration"]]
+    pace_name, km, fuel_per_day, _ = PACES[game["pace"]]
+    food_per_day = people * per_person
+    print(f"食物: {s['食物']} 份。口粮{ration_name}, 每天吃 {food_per_day} 份, 还够吃 {s['食物'] // food_per_day} 天")
+    print(f"水: {s['水']} 份。每天喝 {people} 份 (酷热天要多喝), 还够喝 {s['水'] // people} 天")
+    fuel_days = s["燃料"] // fuel_per_day
+    print(f"燃料: {s['燃料']} 份。速度{pace_name}, 每天用 {fuel_per_day} 份, "
+          f"还够开 {fuel_days} 天, 大约 {show_distance(game, fuel_days * km)}")
+    print(f"药品 {s['药品']}  零件 {s['零件']}  子弹 {s['子弹']}  钱 {game['money']}")
+    print(f"离{DESTINATION}还有 {show_distance(game, TOTAL_DISTANCE - game['distance'])}")
+
+
 # ========== 每天发生的事 ==========
 
 def pass_day(game, health_bonus=0, indoors=False):
@@ -758,7 +797,7 @@ def main():
         game = new_game()
         setup(game)
     actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: use_medicine,
-               6: change_ration, 7: change_pace}
+               6: change_ration, 7: change_pace, 8: show_party}
 
     while True:
         if not game["party"]:
@@ -770,9 +809,10 @@ def main():
             break
 
         show_status(game)
-        print("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 使用药品  6. 改变口粮  7. 改变速度  8. 存档")
-        choice = ask_number("你要做什么? ", 1, 8)
-        if choice == 8:
+        print("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 使用药品  "
+              "6. 改变口粮  7. 改变速度  8. 查看队伍  9. 存档")
+        choice = ask_number("你要做什么? ", 1, 9)
+        if choice == 9:
             save_game(game)
             if ask_number("1. 继续玩  2. 退出游戏  ", 1, 2) == 2:
                 print("下次再见!")

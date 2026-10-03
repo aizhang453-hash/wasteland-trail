@@ -35,7 +35,7 @@ def random_player(rng):
         if "买什么" in prompt:
             return rng.choice(["0", "0", "1", "2", "3", "4", "5", "6"])
         if "你要做什么" in prompt:      # 一半时候往前开, 这样才能走得远、遇到更多事
-            return rng.choice(["1", "1", "1", "1", "1", "1", "2", "3", "4", "5", "6", "7", "8"])
+            return rng.choice(["1", "1", "1", "1", "1", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
         if "退出游戏" in prompt:        # 存档后大多数时候接着玩
             return "2" if rng.random() < 0.05 else "1"
         if rng.random() < 0.1:
@@ -277,6 +277,23 @@ class GameTest(unittest.TestCase):
                 if job and "变异野兽" not in text:
                     self.assertEqual(text.count("找到了"), 2)
             self.assertEqual(empty > 0, empty_allowed)
+
+    def test_show_party(self):
+        """查看队伍: 能看到每个人、主角、职业和特长、物资能撑几天, 而且不花时间"""
+        game = new_test_game()
+        game["leader"] = "A"
+        game["jobs"] = {"B": "医生"}
+        game["dead"] = ["E"]
+        game["supplies"]["食物"] = 120   # 4 个人普通口粮每天 8 份 -> 15 天
+        game["supplies"]["燃料"] = 30    # 中速每天 2 份 -> 15 天, 每天 105 公里
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.show_party(game)
+        text = screen.getvalue()
+        for words in ["A (主角)", "B (医生)", w.SKILLS["医生"], "路上失去的人: E",
+                      "还够吃 15 天", "还够开 15 天, 大约 1575 公里"]:
+            self.assertIn(words, text)
+        self.assertEqual(game["day"], 1)
 
     def test_hunting(self):
         """打得又快又对: 拿全部的肉; 慢一点: 一半; 太慢或打错: 没有"""
