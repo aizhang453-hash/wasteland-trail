@@ -16,7 +16,6 @@ SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.j
 
 TOTAL_DISTANCE = 1000   # 到安全城市的总路程(公里)
 START_MONEY = 700       # 一开始的钱
-WINTER_DAY = 50         # 第几天冬天来, 在那之前要赶到
 
 # 路上的据点: 路程 -> 名字
 OUTPOSTS = {250: "锈铁镇", 500: "水塔营地", 750: "旧机场据点"}
@@ -140,8 +139,7 @@ def new_game():
 
 def setup(game):
     print("核战争已经过去二十年了。")
-    print(f"你要带着队伍开车穿过废土, 到 {TOTAL_DISTANCE} 公里外的安全城市。")
-    print(f"冬天会在第 {WINTER_DAY} 天到来, 一定要在那之前赶到。\n")
+    print(f"你要带着队伍开车穿过废土, 到 {TOTAL_DISTANCE} 公里外的安全城市。\n")
     leader = input("你叫什么名字? (直接按回车就叫\"队长\") ").strip() or "队长"
     gender = ask_number("你的性别: 1. 男  2. 女  ", 1, 2)
     game["gender"] = "男" if gender == 1 else "女"
@@ -186,9 +184,7 @@ def shop(game):
 def show_status(game):
     s = game["supplies"]
     left = TOTAL_DISTANCE - game["distance"]
-    winter = WINTER_DAY - game["day"]
-    print(f"\n==== 第 {game['day']} 天 | 已走 {game['distance']} 公里 | 还剩 {left} 公里"
-          f" | 离冬天还有 {winter} 天 ====")
+    print(f"\n==== 第 {game['day']} 天 | 已走 {game['distance']} 公里 | 还剩 {left} 公里 ====")
     print(f"天气: {game['weather']} ({WEATHER[game['weather']][4]})")
     print("物资: " + "  ".join(f"{k} {v}" for k, v in s.items()) + f"  钱 {game['money']}")
     print("队员: " + "  ".join(f"{n} {health_word(h)}({h})" for n, h in game["party"].items()))
@@ -590,11 +586,6 @@ def main():
             break
         if game["distance"] >= TOTAL_DISTANCE:
             arrive(game)
-            break
-        if game["day"] >= WINTER_DAY:
-            print("\n【结局: 核冬天】")
-            print("灰色的雪开始落下, 气温一夜之间降到零下三十度。")
-            print(f"你们离安全城市还有 {TOTAL_DISTANCE - game['distance']} 公里, 再也走不动了……")
             break
 
         show_status(game)
