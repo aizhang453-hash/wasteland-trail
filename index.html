@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#071007">
+<title>废土之旅</title>
+<style>
+  :root {
+    --bg: #071007;
+    --fg: #3dff6e;
+    --dim: #1d7a36;
+  }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    font-family: Consolas, Menlo, "DejaVu Sans Mono", "Noto Sans Mono CJK SC", "Microsoft YaHei Mono", monospace;
+  }
+  /* 屏幕: 字号跟着屏幕宽度变, 让 60 个字宽的字符画在手机上也放得下 */
+  #screen {
+    flex: 1;
+    margin: 0;
+    padding: 8px 10px;
+    overflow-y: auto;
+    font-family: inherit;   /* <pre> 自己带着默认字体, 要让它用上面 body 设的字体 */
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-size: clamp(8px, calc((100vw - 24px) / 37), 16px);
+    line-height: 1.3;
+    text-shadow: 0 0 4px rgba(61, 255, 110, 0.45);
+  }
+  #controls {
+    border-top: 1px solid var(--dim);
+    padding: 8px;
+  }
+  #bar {
+    display: flex;
+    gap: 6px;
+  }
+  #answer {
+    flex: 1;
+    min-width: 0;
+    padding: 8px;
+    font: inherit;
+    font-size: 16px;   /* 16px 以上 iPhone 才不会在点输入框时自动放大网页 */
+    color: var(--fg);
+    background: #000;
+    border: 1px solid var(--dim);
+    border-radius: 4px;
+  }
+  button {
+    font: inherit;
+    font-size: 16px;
+    color: var(--bg);
+    background: var(--fg);
+    border: none;
+    border-radius: 4px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  button:disabled {
+    background: var(--dim);
+    cursor: default;
+  }
+  /* 手机上点数字用的小键盘 */
+  #keypad {
+    display: grid;
+    grid-template-columns: repeat(11, 1fr);
+    gap: 4px;
+    margin-top: 6px;
+  }
+  #keypad button {
+    padding: 8px 0;
+    color: var(--fg);
+    background: #000;
+    border: 1px solid var(--dim);
+  }
+</style>
+</head>
+<body>
+<pre id="screen" aria-live="polite"></pre>
+<div id="controls">
+  <form id="bar" autocomplete="off">
+    <input id="answer" aria-label="你的回答" maxlength="200" disabled
+           autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="等游戏载入……">
+    <button id="send" type="submit" disabled>确定</button>
+  </form>
+  <div id="keypad"></div>
+</div>
+
+<script>
+  const SAVE_KEY = "wasteland-trail-save";   // 存档在浏览器里的名字
+  const screenBox = document.getElementById("screen");
+  const answer = document.getElementById("answer");
+  const send = document.getElementById("send");
+
+  // ---------- 屏幕: 一个很简单的「终端」 ----------
+  // 游戏的动画会用控制字符把光标往上移 (比如 ESC[11A 是上移 11 行), 再画新的一帧盖掉旧的。
+  // 这里用一行一行的文字记住屏幕上的内容, 再记住光标在第几行、第几个字。
+  const lines = [""];
+  let row = 0;
+  let col = 0;
+  let unfinished = "";   // 一个控制字符可能被切成两段送过来, 先留着等下一段
+  let drawScheduled = false;
+
+  function write(text) {
+    text = unfinished + text;
+    unfinished = "";
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === "\x1b") {
+        const rest = text.slice(i);
+        const code = rest.match(/^\x1b\[(\??)(\d*)([A-Za-z])/);
+        if (!code) {
+          if (rest.length < 8) {   // 还没收完整
+            unfinished = rest;
+            break;
+          }
+          continue;   // 不认得的控制字符, 跳过
+        }
+        if (code[3] === "A" && !code[1]) {   // 光标往上移几行
+          row = Math.max(0, row - Number(code[2] || 1));
+        }                                    // 其他的 (比如藏光标、显示光标) 这里用不着
+        i += code[0].length - 1;
+        continue;
+      }
+      if (ch === "\n") {
+        row++;
+        col = 0;
+        if (row >= lines.length) lines.push("");
+        continue;
+      }
+      if (ch === "\r") {
+        col = 0;
+        continue;
+      }
+      const line = lines[row].padEnd(col);
+      lines[row] = line.slice(0, col) + ch + line.slice(col + 1);
+      col++;
+    }
+    // 只留最近的 2000 行, 免得玩久了网页越来越慢
+    if (lines.length > 2000) {
+      const extra = lines.length - 2000;
+      lines.splice(0, extra);
+      row = Math.max(0, row - extra);
+    }
+    if (!drawScheduled) {
+      drawScheduled = true;
+      requestAnimationFrame(draw);
+    }
+  }
+
+  function draw() {
+    drawScheduled = false;
+    screenBox.textContent = lines.join("\n");
+    screenBox.scrollTop = screenBox.scrollHeight;
+  }
+
+  // ---------- 存档: 存在浏览器的 localStorage 里 (隐私模式下可能用不了, 那就不存) ----------
+  function readSave() {
+    try { return localStorage.getItem(SAVE_KEY) || ""; } catch (e) { return ""; }
+  }
+  function writeSave(text) {
+    try {
+      if (text) localStorage.setItem(SAVE_KEY, text);
+      else localStorage.removeItem(SAVE_KEY);
+    } catch (e) { /* 存不了就算了 */ }
+  }
+
+  // ---------- 输入: 把玩家输入的字放进和后台线程共用的内存, 再叫醒它 ----------
+  let memory, control, letters;
+  let waiting = false;   // 游戏是不是正在等玩家输入
+
+  function askForAnswer() {
+    waiting = true;
+    answer.disabled = false;
+    send.disabled = false;
+    answer.placeholder = "在这里输入, 按回车或点「确定」";
+    answer.focus({ preventScroll: true });
+  }
+
+  document.getElementById("bar").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!waiting) return;
+    const text = answer.value;
+    answer.value = "";
+    write(text + "\n");   // 像终端一样, 把输入的字显示在问题后面
+    const bytes = new TextEncoder().encode(text).slice(0, letters.length);
+    letters.set(bytes);
+    control[1] = bytes.length;
+    Atomics.store(control, 0, 1);
+    Atomics.notify(control, 0);
+    waiting = false;
+    send.disabled = true;
+  });
+
+  // 小键盘: 1~9、0 和退格
+  const keypad = document.getElementById("keypad");
+  for (const key of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "←"]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = key;
+    button.addEventListener("click", () => {
+      answer.value = key === "←" ? answer.value.slice(0, -1) : answer.value + key;
+    });
+    keypad.appendChild(button);
+  }
+
+  // ---------- 启动 ----------
+  function remember(key, value) {
+    try {
+      if (value) sessionStorage.setItem(key, value);
+      else sessionStorage.removeItem(key);
+    } catch (e) { /* 用不了就算了 */ }
+  }
+  function recall(key) {
+    try { return sessionStorage.getItem(key); } catch (e) { return null; }
+  }
+
+  async function start() {
+    // 等玩家输入要用 SharedArrayBuffer, 得先让 sw.js 装好, 再刷新一次网页才能用
+    if (!window.crossOriginIsolated) {
+      if ("serviceWorker" in navigator && !recall("reloaded-for-sw")) {
+        try {
+          await navigator.serviceWorker.register("sw.js");
+          await navigator.serviceWorker.ready;
+          remember("reloaded-for-sw", "1");
+          location.reload();
+          return;
+        } catch (e) { /* 装不上, 往下走, 显示提示 */ }
+      }
+      write("这个浏览器暂时玩不了网页版。\n请换最新版的 Chrome、Edge、Firefox 或 Safari 再试试,\n或者下载游戏在电脑上玩: https://github.com/aizhang453-hash/wasteland-trail\n");
+      return;
+    }
+    remember("reloaded-for-sw", "");
+
+    memory = new SharedArrayBuffer(8 + 1024);
+    control = new Int32Array(memory, 0, 2);
+    letters = new Uint8Array(memory, 8);
+
+    const worker = new Worker("web/worker.js", { type: "module" });
+    worker.onmessage = (event) => {
+      const message = event.data;
+      if (message.type === "output") write(message.text);
+      else if (message.type === "need-input") askForAnswer();
+      else if (message.type === "save") writeSave(message.text);
+      else if (message.type === "status") answer.placeholder = message.text || "等游戏开始……";
+      else if (message.type === "finished") {
+        write("\n—— 游戏已经关掉了。刷新网页可以重新开始。——\n");
+        answer.disabled = true;
+        send.disabled = true;
+        answer.placeholder = "刷新网页可以重新开始";
+      }
+    };
+    worker.onerror = (event) => write("\n网页版出错了: " + event.message + "\n");
+    write("正在启动废土之旅……\n");
+    worker.postMessage({ inputMemory: memory, savedGame: readSave() });
+  }
+
+  start();
+</script>
+</body>
+</html>

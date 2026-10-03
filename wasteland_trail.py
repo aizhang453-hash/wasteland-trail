@@ -4,7 +4,6 @@
 运行方法: 在终端里输入 python wasteland_trail.py
 """
 
-import ctypes
 import json
 import os
 import random
@@ -27,7 +26,7 @@ SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.j
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v2.0"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v2.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -263,6 +262,10 @@ STRANGER_NAMES = ["迈克", "安娜", "老乔", "凯特", "比尔"]
 
 
 # ========== 小工具 ==========
+
+# 是不是在网页版里 (网页里的 Python 叫 Pyodide, 它的 sys.platform 是 "emscripten")
+IN_BROWSER = sys.platform == "emscripten"
+
 
 def can_read_keys():
     """是不是在真正的终端里玩, 能一个键一个键地读。跑测试或者用管道输入时就不是"""
@@ -1506,18 +1509,19 @@ def enable_ansi():
     if os.name != "nt":
         return
     try:
+        import ctypes   # 只有 Windows 用得到, 放在这里 (网页版里的 Python 不一定有这个模块)
         kernel32 = ctypes.windll.kernel32
         handle = kernel32.GetStdHandle(-11)                # -11 表示"屏幕输出"
         mode = ctypes.c_uint32()
         kernel32.GetConsoleMode(handle, ctypes.byref(mode))
         kernel32.SetConsoleMode(handle, mode.value | 4)    # 4 就是"认得控制字符"的开关
-    except (AttributeError, OSError):
+    except (ImportError, AttributeError, OSError):
         pass
 
 
 def drive_animation(game):
-    """赶路时播放的过场动画。只在真正的终端里播放, 跑测试或者用管道输入时不播"""
-    if not ANIMATION or not can_read_keys():
+    """赶路时播放的过场动画。只在真正的终端里和网页版里播放, 跑测试或者用管道输入时不播"""
+    if not ANIMATION or not (can_read_keys() or IN_BROWSER):
         return
     enable_ansi()
     print("\x1b[?25l", end="")   # 先把光标藏起来, 不然它会在画面上一闪一闪

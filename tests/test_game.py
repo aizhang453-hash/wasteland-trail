@@ -979,6 +979,14 @@ class GameTest(unittest.TestCase):
         self.assertTrue(text.startswith("\x1b[?25l"))
         self.assertTrue(text.endswith("\x1b[?25h"))
 
+    def test_animation_plays_in_browser(self):
+        """网页版里不是「真正的终端」, 但网页能处理光标上移, 所以也播动画"""
+        screen = io.StringIO()
+        with mock.patch.object(w, "IN_BROWSER", True), mock.patch.object(w.time, "sleep", lambda seconds: None), \
+                redirect_stdout(screen):
+            w.drive_animation(w.new_game())
+        self.assertIn("(@)", screen.getvalue())
+
     def test_no_animation_when_not_in_terminal_or_turned_off(self):
         """跑测试 (不是真正的终端) 时赶路不播动画; 设置里关掉了, 在终端里也不播"""
         game = new_test_game()
