@@ -4,6 +4,7 @@
 """
 
 import io
+import json
 import os
 import random
 import sys
@@ -176,13 +177,15 @@ class GameTest(unittest.TestCase):
 
     def test_start_alone(self):
         """开局只有主角一个人"""
-        answers = iter(["1", "小明", "2", "0"])   # 公里、名字、女、不买东西
+        answers = iter(["1", "小明", "2", "6", "0"])   # 公里、名字、女、6 月出发、不买东西
         game = w.new_game()
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.setup(game)
         self.assertEqual(game["party"], {"小明": 100})
         self.assertEqual(game["leader"], "小明")
         self.assertEqual(game["gender"], "女")
+        self.assertEqual(game["start_month"], 6)
+        self.assertEqual(w.date_text(game), "6月1日")
 
     def test_recruit_at_outpost(self):
         """到了据点, 愿意跟着走的人可以带上, 也可以不带; 每个据点只问一次"""
@@ -294,9 +297,9 @@ class GameTest(unittest.TestCase):
     def test_scavenger(self):
         """有拾荒者时, 搜刮废墟不会空手而归; 没遇到野狗就一次找到两样"""
         for job, empty_allowed in [(None, True), ("拾荒者", False)]:
-            game = self.with_job(job) if job else new_test_game()
             empty = 0
             for seed in range(50):
+                game = self.with_job(job) if job else new_test_game()   # 每次都是一局新游戏, 大家都满血
                 random.seed(seed)
                 screen = io.StringIO()
                 with redirect_stdout(screen):
@@ -326,7 +329,7 @@ class GameTest(unittest.TestCase):
 
     def test_diary(self):
         """旅行日记会记下出发、经过的地方、谁加入了、谁去世了, 而且带着天数和路程"""
-        answers = iter(["1", "小明", "1", "0"])   # 公里、名字、男、不买东西
+        answers = iter(["1", "小明", "1", "5", "0"])   # 公里、名字、男、5 月出发、不买东西
         game = w.new_game()
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.setup(game)
@@ -337,7 +340,7 @@ class GameTest(unittest.TestCase):
             w.hurt(game, "杰克", 100)
         diary = "\n".join(game["diary"])
         for words in ["小明被赶出了独立城地下的避难所", "经过了堪萨斯河渡口", "到了卡尼堡",
-                      "老兵杰克在卡尼堡加入了队伍", "杰克 去世了", "第 1 天, 已走 510 公里"]:
+                      "老兵杰克在卡尼堡加入了队伍", "杰克 去世了", "5月1日 (第 1 天), 已走 510 公里"]:
             self.assertIn(words, diary)
         screen = io.StringIO()
         with redirect_stdout(screen):
@@ -376,6 +379,268 @@ class GameTest(unittest.TestCase):
         game["gender"] = "男"
         self.assertEqual(w.pick(game, "大哥", "大姐"), "大哥")
 
+    # ---------- 日期和天气 ----------
+
+    def test_dates(self):
+        """第几天是几月几号: 跨月、跨年都要算对"""
+        game = w.new_game()
+        game["start_month"] = 4
+        self.assertEqual(w.date_text(game, 1), "4月1日")
+        self.assertEqual(w.date_text(game, 30), "4月30日")
+        self.assertEqual(w.date_text(game, 31), "5月1日")
+        self.assertEqual(w.date_text(game, 62), "6月1日")
+        game["start_month"] = 12
+        self.assertEqual(w.date_text(game, 32), "1月1日")
+
+    def test_climate_table(self):
+        """气候表: 地区按路线排好, 每个地区都有 12 个月的数字"""
+        self.assertEqual(min(w.CLIMATE), 0)
+        self.assertLess(max(w.CLIMATE), w.TOTAL_DISTANCE)
+        for region, highs, wet_days, snow_days in w.CLIMATE.values():
+            with self.subTest(region=region):
+                self.assertEqual([len(highs), len(wet_days), len(snow_days)], [12, 12, 12])
+                for month in range(12):
+                    self.assertGreater(wet_days[month], 0)   # 算下雪的比例时要除以它, 不能是 0
+                    self.assertLessEqual(wet_days[month], w.MONTH_DAYS[month])
+        regions = [region for region, *_ in w.CLIMATE.values()]
+        for region in w.DUSTY_REGIONS:
+            self.assertIn(region, regions)
+
+    def roll_many(self, km, month, days=5000):
+        """在某个地方、某个月, 连着过很多天, 返回每天的 (天气, 气温)"""
+        game = w.new_game()
+        game["distance"] = km
+        game["start_month"] = month
+        game["day"] = 15   # 一直是这个月的 15 号
+        random.seed(1)
+        results = []
+        for _ in range(days):
+            w.roll_weather(game)
+            results.append((game["weather"], game["temperature"]))
+        return results
+
+    def test_rain_days_match_real_data(self):
+        """连着下雨的日子多了, 但长期算下来, 下雨下雪的天数还是跟气象站的平均差不多"""
+        for km, month in [(0, 5), (2900, 1), (2900, 7), (1270, 4)]:
+            with self.subTest(km=km, month=month):
+                days = self.roll_many(km, month)
+                wet = [weather in w.WET_WEATHER for weather, _ in days]
+                expected = w.CLIMATE[km][2][month - 1] / w.MONTH_DAYS[month - 1]
+                self.assertAlmostEqual(sum(wet) / len(wet), expected, delta=0.04)
+                # 昨天下了雨, 今天接着下的机会比昨天没下时大
+                after_wet = [today for yesterday, today in zip(wet, wet[1:]) if yesterday]
+                after_dry = [today for yesterday, today in zip(wet, wet[1:]) if not yesterday]
+                self.assertGreater(sum(after_wet) / len(after_wet), sum(after_dry) / len(after_dry))
+
+    def test_weather_follows_place_and_season(self):
+        """7 月的大平原很热、不下雪, 会有辐射风暴; 1 月的胡德山很冷, 常下雪, 还会有暴风雪"""
+        summer = self.roll_many(0, 7)
+        winter = self.roll_many(2900, 1)
+        summer_weather = [weather for weather, _ in summer]
+        winter_weather = [weather for weather, _ in winter]
+        self.assertNotIn("灰雪", summer_weather)
+        self.assertNotIn("灰色暴风雪", summer_weather)
+        self.assertIn("辐射风暴", summer_weather)
+        self.assertIn("灰雪", winter_weather)
+        self.assertIn("灰色暴风雪", winter_weather)
+        self.assertNotIn("辐射风暴", winter_weather)   # 辐射风暴要天热才有 (就像雷暴)
+        self.assertGreater(sum(t for _, t in summer) / len(summer), 25)
+        self.assertLess(sum(t for _, t in winter) / len(winter), 3)
+        # 沙尘暴只在又干又多风的地方刮
+        self.assertIn("辐射沙尘暴", [weather for weather, _ in self.roll_many(1900, 6)])
+        self.assertNotIn("辐射沙尘暴", [weather for weather, _ in self.roll_many(0, 6)])
+
+    def test_every_weather_can_happen(self):
+        """每一种天气都会在路上的某个地方、某个月出现"""
+        seen = set()
+        for km in w.CLIMATE:
+            for month in [1, 4, 7]:
+                seen.update(weather for weather, _ in self.roll_many(km, month, days=2000))
+        self.assertEqual(seen, set(w.WEATHER))
+
+    def test_storm_goes_into_diary(self):
+        """碰上辐射风暴要记进旅行日记, 连着几天的风暴只记一次"""
+        game = new_test_game()
+        game["start_month"] = 7   # 7 月的大平原
+        storm_days = 0
+        random.seed(1)
+        with mock.patch.object(w, "STORM_CHANCE", 1):   # 天热时下雨一定是辐射风暴
+            for _ in range(200):
+                game["warmth"] = 10   # 一直很热
+                w.roll_weather(game)
+                storm_days += game["weather"] == "辐射风暴"
+        written = [line for line in game["diary"] if "遇到了辐射风暴" in line]
+        self.assertGreater(len(written), 0)
+        self.assertLess(len(written), storm_days)
+
+    def test_snow_is_cold(self):
+        """下雪的日子气温不会超过 2 度"""
+        for weather, temperature in self.roll_many(1270, 4):
+            if weather in ["灰雪", "灰色暴风雪"]:
+                self.assertLessEqual(temperature, 2)
+
+    def test_cold_without_clothes(self):
+        """天冷时冬衣只够一个人穿: 排在前面的穿上, 没穿上的人冻伤。躲在车里也会冻着"""
+        game = new_test_game()
+        game["party"] = {"A": 50, "B": 50}
+        game["supplies"]["冬衣"] = 1
+        game["temperature"] = 5   # 寒冷
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.pass_day(game, indoors=True)
+        self.assertEqual(game["party"], {"A": 51, "B": 48})   # 普通口粮 +1, 没冬衣 -3
+        self.assertIn("B没有冬衣穿", screen.getvalue())
+        self.assertEqual(game["supplies"]["食物"], 100 - 2 * 3)   # 天冷每人多吃 1 份
+
+        game["party"] = {"A": 50, "B": 50}
+        game["weather"] = "晴"      # 过了一天天气变了, 换回晴天, 只看冷的影响
+        game["temperature"] = -5   # 严寒, 在外面
+        with redirect_stdout(io.StringIO()):
+            w.pass_day(game)
+        self.assertEqual(game["party"], {"A": 50, "B": 42})   # 口粮 +1, 严寒在外面 -1, 没冬衣再 -8
+
+    def test_heat_needs_more_water(self):
+        """酷热天每人多喝 2 份水, 在外面还会中暑"""
+        game = new_test_game()
+        game["temperature"] = 38
+        with redirect_stdout(io.StringIO()):
+            w.pass_day(game)
+        self.assertEqual(game["supplies"]["水"], 100 - 4 * 3)
+        self.assertEqual(list(game["party"].values()), [99, 99, 99, 99])   # 口粮 +1, 中暑 -2
+
+    def test_blizzard_stops_the_car(self):
+        """暴风雪里车开不动: 不往前走、不用燃料, 但是过了一天"""
+        game = new_test_game()
+        game["weather"] = "灰色暴风雪"
+        game["temperature"] = 0
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.travel(game)
+        self.assertEqual(game["distance"], 0)
+        self.assertEqual(game["supplies"]["燃料"], 100)
+        self.assertEqual(game["day"], 2)
+        self.assertIn("开不动", screen.getvalue())
+
+    def test_temperature_units(self):
+        """选公里就用摄氏度, 选英里就用华氏度"""
+        game = new_test_game()
+        self.assertEqual(w.show_temperature(game, 30), "30°C")
+        game["unit"] = "英里"
+        self.assertEqual(w.show_temperature(game, 30), "86°F")
+        self.assertEqual(w.show_temperature(game, -5), "23°F")
+
+    def test_status_shows_date_and_weather(self):
+        game = new_test_game()
+        game["start_month"] = 6
+        game["day"] = 3
+        game["distance"] = 1450   # 南山口
+        game["weather"] = "黑雨"
+        game["temperature"] = 33
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.show_status(game)
+        for words in ["6月3日 (第 3 天)", "地区: 落基山区", "天气: 黑雨", "33°C 炎热",
+                      "路上泥泞", "每人要多喝 1 份水", "冬衣 100"]:
+            self.assertIn(words, screen.getvalue())
+
+    def test_old_save_still_loads(self):
+        """以前版本的存档 (没有冬衣、出发月份, 天气还叫"酷热") 也能接着玩"""
+        old = w.new_game()
+        old["party"] = {"A": 80}
+        old["leader"] = "A"
+        old["weather"] = "酷热"
+        del old["supplies"]["冬衣"]
+        del old["supplies"]["排辐剂"]
+        for key in ["start_month", "temperature", "warmth", "rads"]:
+            del old[key]
+        with open(w.SAVE_FILE, "w", encoding="utf-8") as f:
+            json.dump(old, f, ensure_ascii=False)
+        with redirect_stdout(io.StringIO()):
+            game = w.load_game()
+            w.show_status(game)
+            w.show_party(game)
+            w.pass_day(game)
+        self.assertEqual(game["supplies"]["冬衣"], 0)
+        self.assertEqual(game["supplies"]["排辐剂"], 0)
+        self.assertIn(game["weather"], w.WEATHER)
+
+    # ---------- 辐射 ----------
+
+    def test_storm_radiation_even_in_the_car(self):
+        """辐射风暴: 在外面每天受 15 点辐射, 躲在车里也有 5 点"""
+        for indoors, expected in [(False, 15), (True, 5)]:
+            game = new_test_game()
+            game["weather"] = "辐射风暴"
+            with redirect_stdout(io.StringIO()):
+                w.pass_day(game, indoors=indoors)
+            self.assertEqual(game["rads"], {"A": expected, "B": expected, "C": expected, "D": expected})
+
+    def test_radiation_hurts_every_day(self):
+        """辐射值高的人每天掉血, 越高掉得越多; 辐射不会自己降下来"""
+        game = new_test_game()
+        game["rads"] = {"A": 10, "B": 30, "C": 60, "D": 90}
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.pass_day(game, indoors=True)
+        # 普通口粮 +1 (满血 100 封顶), 再按辐射: 轻度 -1, 严重 -3, 致命 -6
+        self.assertEqual(game["party"], {"A": 100, "B": 99, "C": 97, "D": 94})
+        self.assertEqual(game["rads"], {"A": 10, "B": 30, "C": 60, "D": 90})
+        self.assertIn("辐射在B、C、D的身体里作怪", screen.getvalue())
+
+    def test_anti_rad(self):
+        """排辐剂给辐射最高的人用, 一支排掉 50 点; 没人受辐射时不浪费"""
+        game = new_test_game()
+        with redirect_stdout(io.StringIO()):
+            w.use_anti_rad(game)
+        self.assertEqual(game["supplies"]["排辐剂"], 100)
+        game["rads"] = {"A": 30, "B": 70}
+        with redirect_stdout(io.StringIO()):
+            w.use_anti_rad(game)
+            w.use_anti_rad(game)
+        self.assertEqual(game["rads"], {"A": 0, "B": 20})
+        self.assertEqual(game["supplies"]["排辐剂"], 98)
+
+    def test_medicine_menu(self):
+        """主菜单的「用药」: 选 1 用药品治伤, 选 2 用排辐剂, 选 0 什么都不用"""
+        for answer, used in [("1", "药品"), ("2", "排辐剂"), ("0", None)]:
+            game = new_test_game()
+            game["party"]["A"] = 50
+            game["rads"] = {"B": 60}
+            with mock.patch("builtins.input", lambda p="", a=answer: a), redirect_stdout(io.StringIO()):
+                w.take_medicine(game)
+            for item in ["药品", "排辐剂"]:
+                self.assertEqual(game["supplies"][item], 99 if item == used else 100)
+
+    def test_radiation_sickness_event(self):
+        """辐射病不直接掉血, 而是辐射一下子升高"""
+        game = new_test_game()
+        game["party"] = {"A": 100}
+        with redirect_stdout(io.StringIO()):
+            w.radiation_sickness(game)
+        self.assertEqual(game["rads"], {"A": w.SICKNESS_RADS})
+        self.assertEqual(game["party"], {"A": 100})
+
+    def test_radiation_is_capped_and_cleared(self):
+        """辐射值最多 100; 人去世以后就不再记他的辐射"""
+        game = new_test_game()
+        w.irradiate(game, "A", 500)
+        self.assertEqual(game["rads"], {"A": 100})
+        with redirect_stdout(io.StringIO()):
+            w.hurt(game, "A", 100)
+        self.assertEqual(game["rads"], {})
+
+    def test_radiation_shown(self):
+        """状态栏和查看队伍都能看到辐射"""
+        game = new_test_game()
+        game["rads"] = {"B": 60}
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.show_status(game)
+            w.show_party(game)
+        self.assertIn("B 良好(100) 辐射60", screen.getvalue())
+        self.assertIn("辐射 60 严重, 每天掉 3 点健康", screen.getvalue())
+        self.assertIn("排辐剂 100", screen.getvalue())
+
     def test_save_and_load(self):
         game = new_test_game()
         game["day"] = 12
@@ -386,7 +651,7 @@ class GameTest(unittest.TestCase):
             self.assertEqual(w.load_game(), game)
 
     def test_broken_save_starts_new_game(self):
-        with open(w.SAVE_FILE, "w") as f:
+        with open(w.SAVE_FILE, "w", encoding="utf-8") as f:
             f.write("这不是存档")
         with redirect_stdout(io.StringIO()):
             self.assertIsNone(w.load_game())

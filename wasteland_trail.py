@@ -68,7 +68,7 @@ LANDMARKS = {
 }
 
 # 商店价格(每个多少钱)
-PRICES = {"食物": 1, "水": 1, "燃料": 4, "子弹": 1, "零件": 20, "药品": 15}
+PRICES = {"食物": 1, "水": 1, "燃料": 4, "子弹": 1, "零件": 20, "药品": 15, "冬衣": 10, "排辐剂": 20}
 
 # 口粮: 编号 -> (名字, 每人每天吃几份, 每天健康变化)
 RATIONS = {1: ("少", 1, -2), 2: ("普通", 2, 1), 3: ("饱", 3, 3)}
@@ -79,17 +79,98 @@ EVENT_CHANCE_PER_100KM = 0.35
 # 速度: 编号 -> (名字, 车每天开几公里, 每天用几份燃料, 每天健康变化)
 PACES = {1: ("慢", 90, 1, 1), 2: ("中", 105, 2, 0), 3: ("快", 120, 3, -2)}
 
-# 天气: 名字 -> (出现的机会, 路程倍数, 每人多喝几份水, 在外面时每天健康变化, 说明)
-WEATHER = {
-    "晴朗":   (6, 1.0, 0, 0, "适合赶路"),
-    "酷热":   (2, 1.0, 1, -1, "每人要多喝 1 份水"),
-    "沙尘暴": (1, 0.5, 0, -2, "车只能开平时一半的路"),
-    "酸雨":   (1, 0.7, 0, -5, "在外面会受伤, 休息可以躲雨"),
+# ---------- 日期和天气 ----------
+
+# 出发月份: 跟原版《俄勒冈之旅》一样, 可以选 3 月到 7 月。第 1 天是出发那个月的 1 号
+FIRST_MONTH = 3
+LAST_MONTH = 7
+MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]   # 每个月有几天 (不算闰年)
+
+# 沿路的气候: 从几公里开始 -> (地区名, 每个月白天的平均最高气温 (摄氏度, 1 月到 12 月),
+#                              每个月有几天下雨或下雪, 其中有几天下雪)
+# 数字用的是每个地区里一个真实气象站 1991~2020 年的平均值 (美国国家海洋和大气管理局 NOAA)
+CLIMATE = {
+    # 堪萨斯州和内布拉斯加州东部, 气象站: 内布拉斯加州卡尼 (就在卡尼堡旁边)
+    0: ("大平原", [2, 4, 11, 16, 22, 28, 30, 29, 26, 18, 10, 3],
+        [3.8, 4.5, 5.9, 8.5, 11.7, 9.6, 8.8, 8.4, 6.5, 6.6, 4.2, 3.5],
+        [2.7, 3.4, 1.8, 0.9, 0, 0, 0, 0, 0, 0.5, 1.3, 2.4]),
+    # 内布拉斯加州西部到怀俄明州东部, 气象站: 内布拉斯加州斯科茨布拉夫 (就在斯科茨崖旁边)
+    800: ("高平原", [5, 7, 13, 17, 22, 29, 33, 32, 27, 18, 11, 5],
+          [4.7, 6.3, 6.9, 9.4, 12.1, 10.7, 7.7, 6.7, 6.7, 7.0, 5.3, 5.2],
+          [4.1, 5.1, 3.9, 2.8, 0.3, 0, 0, 0, 0.2, 1.6, 3.5, 4.8]),
+    # 甜水河谷、南山口、格林河、布里杰堡一带, 海拔 2000 米上下, 气象站: 怀俄明州法森 (离南山口不远)
+    1270: ("落基山区", [-2, -1, 6, 12, 18, 23, 28, 27, 22, 14, 5, -1],
+           [3.1, 3.3, 3.5, 4.7, 6.0, 4.1, 3.1, 3.7, 4.1, 3.2, 2.5, 3.2],
+           [3.2, 3.0, 2.6, 2.1, 0.3, 0, 0, 0, 0, 0.9, 1.9, 2.9]),
+    # 爱达荷州南部的蛇河平原, 气象站: 爱达荷州特温福尔斯 (离鲑鱼瀑布不远)
+    1900: ("蛇河平原", [3, 6, 11, 15, 20, 25, 30, 30, 24, 17, 9, 3],
+           [10.6, 8.7, 9.3, 10.1, 8.5, 6.5, 2.8, 2.7, 2.9, 5.4, 7.7, 10.3],
+           [5.7, 3.9, 1.8, 0.8, 0, 0, 0, 0, 0, 0.4, 2.1, 5.0]),
+    # 大圆谷和蓝山, 气象站: 俄勒冈州拉格兰德 (就在大圆谷里)
+    2560: ("蓝山", [4, 7, 11, 15, 20, 24, 30, 31, 25, 17, 9, 4],
+           [9.8, 7.9, 10.2, 9.9, 9.2, 7.9, 3.8, 3.0, 3.8, 7.8, 10.1, 11.2],
+           [3.2, 1.6, 1.3, 0.2, 0, 0, 0, 0, 0, 0, 1.3, 3.5]),
+    # 哥伦比亚河南岸, 气象站: 达尔斯对岸的哥伦比亚峡谷机场
+    2720: ("哥伦比亚河谷", [6, 9, 14, 18, 23, 26, 31, 31, 27, 19, 10, 5],
+           [14.1, 11.3, 10.8, 7.9, 6.4, 3.8, 1.5, 1.7, 2.7, 8.3, 13.1, 13.9],
+           [3.7, 2.2, 0.5, 0, 0, 0, 0, 0, 0, 0.1, 1.4, 5.0]),
+    # 绕过胡德山的巴洛路, 气象站: 俄勒冈州政府营 (在胡德山山腰上, 海拔 1186 米)
+    2900: ("胡德山", [3, 3, 5, 7, 12, 15, 21, 21, 18, 12, 5, 2],
+           [20.2, 17.4, 19.9, 18.7, 14.3, 10.6, 3.8, 4.1, 7.4, 13.1, 18.7, 21.0],
+           [10.1, 9.4, 9.2, 6.6, 2.1, 0.4, 0, 0, 0.1, 1.2, 7.1, 12.1]),
 }
+
+# 天气: 名字 -> (路程倍数, 在外面时每天健康变化, 在外面时每天受多少辐射, 躲在车里时每天受多少辐射, 说明)
+# 什么时候下雨下雪还是按真实的气候, 但核战争以后, 天上落下来的东西都不干净了
+WEATHER = {
+    "晴":         (1.0, 0, 0, 0, "天空是脏兮兮的黄色, 适合赶路"),
+    "辐射尘云":   (1.0, 0, 0, 0, "灰褐色的云压得很低, 看着吓人, 不影响赶路"),
+    "毒雾":       (0.6, -2, 0, 0, "黄绿色的毒雾看不清路, 车开得慢, 在外面会呛伤"),
+    "黑雨":       (0.8, 0, 3, 0, "混着灰烬的黑雨, 路上泥泞, 在外面会受一点辐射"),
+    "酸雨":       (0.7, -5, 0, 0, "在外面会受伤, 休息可以躲雨"),
+    "辐射风暴":   (0.6, 0, 15, 5, "天空变成了绿色, 连闪电都是绿的, 在外面辐射很重, 躲在车里也挡不住全部"),
+    "灰雪":       (0.5, 0, 2, 0, "核尘混在雪里, 积雪路滑, 车只能开平时一半的路, 在外面会受一点辐射"),
+    "灰色暴风雪": (0, -3, 2, 0, "车根本开不动, 只能等雪停; 在外面会冻伤, 还会受一点辐射"),
+    "辐射沙尘暴": (0.5, -1, 6, 0, "车只能开平时一半的路, 在外面会呛伤, 还会受辐射"),
+}
+WET_WEATHER = ["黑雨", "酸雨", "辐射风暴", "灰雪", "灰色暴风雪"]   # 算"下雨下雪"的天气
+DIARY_WEATHER = ["辐射风暴", "灰色暴风雪"]   # 碰上这些天气要记进旅行日记
+
+ACID_RAIN_CHANCE = 0.3    # 下雨的日子里, 下的是酸雨的机会 (不是酸雨就是黑雨)
+STORM_CHANCE = 0.5        # 天热 (25 度以上) 时下雨, 是辐射风暴的机会 (就是废土上的雷暴)
+BLIZZARD_CHANCE = 0.25    # 下雪的日子里, 是暴风雪的机会
+FOG_CHANCE = 0.1          # 天凉 (12 度以下) 又不下雨的日子, 起毒雾的机会
+DUST_STORM_CHANCE = 0.1   # 在又干又多风的地方, 不下雨的日子刮沙尘暴的机会
+DUSTY_REGIONS = ["高平原", "落基山区", "蛇河平原", "哥伦比亚河谷"]
+
+# 气温分几档 (按白天最高气温, 摄氏度。32 度和 38 度就是美国人常说的 90 度和 100 度华氏度):
+# (到几度算这一档, 名字, 每人多喝几份水, 每人多吃几份食物, 在外面时每天健康变化, 没穿冬衣的人每天健康变化, 说明)
+# 天热出汗要多喝水; 天冷身体要多烧热量保暖, 要多吃东西
+TEMPERATURES = [
+    (38, "酷热", 2, 0, -2, 0, "每人要多喝 2 份水, 在外面会中暑"),
+    (32, "炎热", 1, 0, 0, 0, "每人要多喝 1 份水"),
+    (20, "温暖", 0, 0, 0, 0, ""),
+    (10, "凉爽", 0, 0, 0, 0, ""),
+    (0, "寒冷", 0, 1, 0, -3, "每人要多吃 1 份食物, 没穿冬衣的人会冻伤"),
+    (-99, "严寒", 0, 1, -1, -8, "每人要多吃 1 份食物, 没穿冬衣的人会严重冻伤, 穿了冬衣在外面也会受冻"),
+]
+
+# ---------- 辐射 ----------
+
+# 每个人身上都有辐射值 (0 到 100), 不会自己降下来, 只能用排辐剂排掉。
+# 辐射值分几档: (到多少算这一档, 名字, 每天健康变化)
+RADIATION_LEVELS = [
+    (80, "致命", -6),
+    (50, "严重", -3),
+    (25, "轻度", -1),
+    (0, "", 0),
+]
+ANTI_RAD = 50          # 一支排辐剂能排掉多少辐射
+SICKNESS_RADS = 40     # 「辐射病」事件一下子增加多少辐射
 
 # 搜刮时可能找到的东西: 名字 -> (最少, 最多)
 LOOT = {"食物": (10, 40), "水": (10, 30), "燃料": (3, 10),
-        "子弹": (10, 30), "零件": (1, 1), "药品": (1, 2)}
+        "子弹": (10, 30), "零件": (1, 1), "药品": (1, 2), "冬衣": (1, 2), "排辐剂": (1, 1)}
 
 # 打猎: 要飞快打出来的词, 和猎物: 名字 -> (最少食物, 最多食物)
 HUNT_WORDS = ["bang", "pow", "boom", "zap"]
@@ -229,6 +310,29 @@ def show_distance(game, km):
     return f"{round(km * UNITS[game['unit']])} {game['unit']}"
 
 
+def show_temperature(game, celsius):
+    """显示气温: 选了公里就用摄氏度, 选了英里就用华氏度 (美国人习惯用的)"""
+    if game["unit"] == "英里":
+        return f"{round(celsius * 9 / 5 + 32)}°F"
+    return f"{celsius}°C"
+
+
+def date_of(game, day=None):
+    """第几天是几月几号, 返回 (月, 日)。第 1 天是出发那个月的 1 号。day 不填就是今天"""
+    day = game["day"] if day is None else day
+    month = game["start_month"]
+    while day > MONTH_DAYS[month - 1]:
+        day -= MONTH_DAYS[month - 1]
+        month = month % 12 + 1
+    return month, day
+
+
+def date_text(game, day=None):
+    """比如 "5月12日" """
+    month, date = date_of(game, day)
+    return f"{month}月{date}日"
+
+
 def skilled(game, job):
     """队伍里活着的人里, 谁是这个职业。没有就返回 None"""
     for name in game["party"]:
@@ -246,7 +350,7 @@ def write_diary(game, text, km=None, day=None):
     km 和 day 不填, 就用现在走到的路程和今天是第几天"""
     km = game["distance"] if km is None else km
     day = game["day"] if day is None else day
-    game["diary"].append(f"第 {day} 天, 已走 {show_distance(game, km)}: {text}")
+    game["diary"].append(f"{date_text(game, day)} (第 {day} 天), 已走 {show_distance(game, km)}: {text}")
 
 
 def show_diary(game):
@@ -262,6 +366,7 @@ def check_deaths(game):
     for name in list(game["party"]):
         if game["party"][name] <= 0:
             del game["party"][name]
+            game["rads"].pop(name, None)
             game["dead"].append(name)
             print(f"!!! {name} 没能撑下去, 去世了。")
             write_diary(game, f"{name} 去世了。")
@@ -280,6 +385,41 @@ def change_all_health(game, amount):
     check_deaths(game)
 
 
+def freeze(game, cold_health):
+    """天冷时, 冬衣不够每人一套的话, 没穿上的人会冻伤。冬衣按队伍里的顺序分, 主角先穿"""
+    cold = list(game["party"])[game["supplies"]["冬衣"]:]
+    if cold_health == 0 or not cold:
+        return
+    who = "你" if len(game["party"]) == 1 else "、".join(cold)
+    print(f"天太冷了, {who}没有冬衣穿, 冻伤了!")
+    for name in cold:
+        hurt(game, name, -cold_health)
+
+
+def radiation_level(rads):
+    """这个辐射值属于哪一档: 返回 RADIATION_LEVELS 里的那一行"""
+    for level in RADIATION_LEVELS:
+        if rads >= level[0]:
+            return level
+    return RADIATION_LEVELS[-1]
+
+
+def irradiate(game, name, amount):
+    """让一个人受到辐射 (amount 是负数就是排掉辐射)。辐射值在 0 到 100 之间"""
+    game["rads"][name] = max(0, min(100, game["rads"].get(name, 0) + amount))
+
+
+def radiation_damage(game):
+    """辐射值高的人每天掉血, 辐射越高掉得越多"""
+    sick = [name for name in game["party"] if radiation_level(game["rads"].get(name, 0))[2] < 0]
+    if not sick:
+        return
+    who = "你" if len(game["party"]) == 1 else "、".join(sick)
+    print(f"辐射在{who}的身体里作怪, 身体越来越差。")
+    for name in sick:
+        hurt(game, name, -radiation_level(game["rads"].get(name, 0))[2])
+
+
 def find_supplies(game):
     item = random.choice(list(LOOT))
     low, high = LOOT[item]
@@ -288,11 +428,72 @@ def find_supplies(game):
     print(f"找到了{item}, 一共 {amount} 个!")
 
 
+def climate_here(game):
+    """现在走到的地方属于哪个气候区: 返回 CLIMATE 里的那一项 (地区名, 平均最高气温, 下雨下雪天数, 下雪天数)"""
+    start = max(km for km in CLIMATE if km <= game["distance"])
+    return CLIMATE[start]
+
+
+def temperature_level(temperature):
+    """这个气温属于哪一档: 返回 TEMPERATURES 里的那一行"""
+    for level in TEMPERATURES:
+        if temperature >= level[0]:
+            return level
+    return TEMPERATURES[-1]
+
+
+def weather_report(game):
+    """今天的天气和气温对赶路有什么影响, 用一句话说清楚"""
+    notes = [WEATHER[game["weather"]][-1]]
+    temperature_note = temperature_level(game["temperature"])[-1]
+    if temperature_note:
+        notes.append(temperature_note)
+    return "; ".join(notes)
+
+
 def roll_weather(game):
-    """随机决定明天的天气"""
-    names = list(WEATHER)
-    chances = [WEATHER[name][0] for name in names]
-    game["weather"] = random.choices(names, chances)[0]
+    """按现在走到的地方和今天的日期, 随机决定今天的天气和气温。
+    平常有多热、一个月有几天下雨下雪, 都按当地气象站的历年平均来; 冷热和雨雪常常会连着好几天"""
+    region, highs, wet_days, snow_days = climate_here(game)
+    month = date_of(game)[0] - 1   # 列表从 0 开始数, 所以 1 月是第 0 个
+    old_weather = game["weather"]
+
+    # 这几天比平常热几度 (负数是冷): 每天变一点, 又慢慢回到平常, 所以热浪和寒潮会持续几天
+    game["warmth"] = round(game["warmth"] * 0.7) + random.randint(-5, 5)
+    temperature = highs[month] + game["warmth"]
+
+    # 下不下雨雪: 昨天下了, 今天接着下的机会大一些; 昨天没下, 今天的机会就小一些。
+    # 这样一个月算下来, 下雨下雪的天数还是跟真实的一样多
+    chance = wet_days[month] / MONTH_DAYS[month]
+    if old_weather in WET_WEATHER:
+        chance = (1 + chance) / 2
+    else:
+        chance = chance / 2
+
+    if random.random() < chance:
+        temperature -= 3   # 阴雨天凉快一些
+        if random.random() < snow_days[month] / wet_days[month]:
+            if temperature > 2:   # 下雪说明冷空气来了, 接下来几天也会冷一些
+                game["warmth"] -= temperature - 2
+                temperature = 2
+            weather = "灰色暴风雪" if random.random() < BLIZZARD_CHANCE else "灰雪"
+        elif temperature >= 25 and random.random() < STORM_CHANCE:
+            weather = "辐射风暴"
+        elif random.random() < ACID_RAIN_CHANCE:
+            weather = "酸雨"
+        else:
+            weather = "黑雨"
+    elif region in DUSTY_REGIONS and random.random() < DUST_STORM_CHANCE:
+        weather = "辐射沙尘暴"
+    elif temperature <= 12 and random.random() < FOG_CHANCE:
+        weather = "毒雾"
+    else:
+        weather = random.choice(["晴", "晴", "辐射尘云"])
+
+    game["weather"] = weather
+    game["temperature"] = temperature
+    if weather in DIARY_WEATHER and weather != old_weather:
+        write_diary(game, f"遇到了{weather}。")
 
 
 # ========== 开始游戏 ==========
@@ -307,13 +508,17 @@ def new_game():
         "dead": [],         # 路上去世的人
         "ration": 2,
         "pace": 2,
-        "weather": "晴朗",
+        "start_month": 4,   # 几月出发 (开局时玩家选)
+        "weather": "晴",
+        "temperature": 20,  # 今天白天的最高气温 (摄氏度)
+        "warmth": 0,        # 这几天比平常热几度 (负数是冷)
         "visited": [],      # 已经到过的据点
         "seeds": False,     # 有没有找到种子库(隐藏结局)
         "gender": "男",     # 主角的性别
         "unit": "公里",     # 显示路程用的单位
         "leader": "",       # 主角的名字
         "jobs": {},         # 队员名字 -> 职业 (主角和路上的陌生人没有职业)
+        "rads": {},         # 队员名字 -> 辐射值 (0 到 100, 没记的就是 0)
         "diary": [],        # 旅行日记: 路上发生的大事, 一条一条记下来
     }
 
@@ -329,12 +534,18 @@ def setup(game):
     leader = input("你叫什么名字? (直接按回车就叫\"队长\") ").strip() or "队长"
     gender = ask_number("你的性别: 1. 男  2. 女  ", 1, 2)
     game["gender"] = "男" if gender == 1 else "女"
+    print("\n什么时候出发? 当年的拓荒者大多在 4、5 月出发。")
+    print("早走天还冷, 山里可能还在下雪, 要带冬衣; 晚走天热, 路上要多喝水。")
+    game["start_month"] = ask_number(f"出发月份 ({FIRST_MONTH}~{LAST_MONTH} 月): ", FIRST_MONTH, LAST_MONTH)
     game["leader"] = leader
     game["party"][leader] = 100
     write_diary(game, f"{leader}被赶出了独立城地下的避难所, 一个人踏上了俄勒冈小道。")
+    roll_weather(game)   # 出发这天的天气
 
     print("\n出发前可以在营地买东西。")
-    print("提示: 每人每天要吃食物、喝 1 份水, 车每天要用燃料。子弹可以打猎, 也可以防身。")
+    print("提示: 每人每天要吃食物、喝 1 份水, 车每天要用燃料。子弹可以打猎, 也可以防身。"
+          "天冷时每人要有一套冬衣。")
+    print("      路上的辐射会在身体里越积越多, 只有排辐剂能把它排掉。")
     shop(game)
 
 
@@ -354,7 +565,8 @@ def shop(game):
         if merchant:
             print(f"商人{merchant}帮你讲价, 买什么都打八折。")
         for i, item in enumerate(items, 1):
-            print(f"{i}. {item}  {PRICES[item]} 块一个  (现在有 {game['supplies'][item]})")
+            measure = "套" if item == "冬衣" else "个"
+            print(f"{i}. {item}  {PRICES[item]} 块一{measure}  (现在有 {game['supplies'][item]})")
         print("0. 离开商店")
         choice = ask_number("买什么? ", 0, len(items))
         if choice == 0:
@@ -371,14 +583,19 @@ def shop(game):
 def show_status(game):
     s = game["supplies"]
     left = TOTAL_DISTANCE - game["distance"]
-    print(f"\n==== 第 {game['day']} 天 | 已走 {show_distance(game, game['distance'])}"
+    print(f"\n==== {date_text(game)} (第 {game['day']} 天) | 已走 {show_distance(game, game['distance'])}"
           f" | 还剩 {show_distance(game, left)} ====")
-    print(f"天气: {game['weather']} ({WEATHER[game['weather']][4]})")
+    temperature = game["temperature"]
+    print(f"地区: {climate_here(game)[0]}  天气: {game['weather']}  "
+          f"气温: {show_temperature(game, temperature)} {temperature_level(temperature)[1]}")
+    print(f"    {weather_report(game)}")
     print("物资: " + "  ".join(f"{k} {v}" for k, v in s.items()) + f"  钱 {game['money']}")
     people = []
     for n, h in game["party"].items():
         job = f"[{game['jobs'][n]}]" if n in game["jobs"] else ""
-        people.append(f"{n}{job} {health_word(h)}({h})")
+        rads = game["rads"].get(n, 0)
+        rads_note = f" 辐射{rads}" if radiation_level(rads)[2] else ""   # 辐射到了会掉血的程度才显示, 免得这一行太长
+        people.append(f"{n}{job} {health_word(h)}({h}){rads_note}")
     print("队员: " + "  ".join(people))
     print(f"口粮: {RATIONS[game['ration']][0]}  速度: {PACES[game['pace']][0]}")
     name, km = next_place(game)
@@ -404,7 +621,10 @@ def show_party(game):
         if name in game["jobs"]:
             tags.append(game["jobs"][name])
         tag = f" ({'、'.join(tags)})" if tags else ""
-        print(f"{name}{tag}  健康 {h} {health_word(h)}  {health_bar(h)}")
+        rads = game["rads"].get(name, 0)
+        _, rads_word, rads_health = radiation_level(rads)
+        rads_note = f" {rads_word}, 每天掉 {-rads_health} 点健康" if rads_health else ""
+        print(f"{name}{tag}  健康 {h} {health_word(h)}  {health_bar(h)}  辐射 {rads}{rads_note}")
         if name in game["jobs"]:
             print(f"    特长: {SKILLS[game['jobs'][name]]}")
     average = sum(game["party"].values()) // len(game["party"])
@@ -418,12 +638,17 @@ def show_party(game):
     ration_name, per_person, _ = RATIONS[game["ration"]]
     pace_name, km, fuel_per_day, _ = PACES[game["pace"]]
     food_per_day = people * per_person
-    print(f"食物: {s['食物']} 份。口粮{ration_name}, 每天吃 {food_per_day} 份, 还够吃 {s['食物'] // food_per_day} 天")
-    print(f"水: {s['水']} 份。每天喝 {people} 份 (酷热天要多喝), 还够喝 {s['水'] // people} 天")
+    print(f"食物: {s['食物']} 份。口粮{ration_name}, 每天吃 {food_per_day} 份 (天冷要多吃), "
+          f"还够吃 {s['食物'] // food_per_day} 天")
+    print(f"水: {s['水']} 份。每天喝 {people} 份 (天热要多喝), 还够喝 {s['水'] // people} 天")
     fuel_days = s["燃料"] // fuel_per_day
     print(f"燃料: {s['燃料']} 份。速度{pace_name}, 每天用 {fuel_per_day} 份, "
           f"还够开 {fuel_days} 天, 大约 {show_distance(game, fuel_days * km)}")
-    print(f"药品 {s['药品']}  零件 {s['零件']}  子弹 {s['子弹']}  钱 {game['money']}")
+    clothes = f"冬衣: {s['冬衣']} 套, 队伍 {people} 人"
+    if s["冬衣"] < people:
+        clothes += f", 天冷时有 {people - s['冬衣']} 个人没冬衣穿"
+    print(clothes)
+    print(f"药品 {s['药品']}  排辐剂 {s['排辐剂']}  零件 {s['零件']}  子弹 {s['子弹']}  钱 {game['money']}")
     print(f"离{DESTINATION}还有 {show_distance(game, TOTAL_DISTANCE - game['distance'])}")
 
 
@@ -431,17 +656,17 @@ def show_party(game):
 
 def pass_day(game, health_bonus=0, indoors=False):
     """过一天: 吃东西、喝水、更新健康, 再换成明天的天气。
-    indoors=True 表示躲在车里, 不受天气伤害。"""
+    indoors=True 表示躲在车里, 不受风吹雨打 (但天冷时没穿冬衣还是会冻着, 辐射风暴也挡不住全部)。"""
     s = game["supplies"]
     people = len(game["party"])
     _, per_person, ration_health = RATIONS[game["ration"]]
-    _, _, extra_water, weather_health, _ = WEATHER[game["weather"]]
+    _, _, extra_water, extra_food, outdoor_health, cold_health, _ = temperature_level(game["temperature"])
     change = ration_health + health_bonus
     if not indoors:
-        change += weather_health
+        change += WEATHER[game["weather"]][1] + outdoor_health
 
     # 食物和水不够的话, 有多少吃多少, 缺得越多健康掉得越多
-    food_need = people * per_person
+    food_need = people * (per_person + extra_food)
     if s["食物"] >= food_need:
         s["食物"] -= food_need
     else:
@@ -458,6 +683,14 @@ def pass_day(game, health_bonus=0, indoors=False):
         print(f"干净的水不够了, {everyone(game)}渴得受不了!")
 
     change_all_health(game, change)
+    freeze(game, cold_health)
+
+    # 辐射: 先算今天受了多少辐射, 再看辐射高的人掉多少血
+    _, _, outdoor_rads, indoor_rads, _ = WEATHER[game["weather"]]
+    for name in game["party"]:
+        irradiate(game, name, indoor_rads if indoors else outdoor_rads)
+    radiation_damage(game)
+
     game["day"] += 1
     roll_weather(game)
 
@@ -465,12 +698,16 @@ def pass_day(game, health_bonus=0, indoors=False):
 def travel(game):
     s = game["supplies"]
     _, km, fuel_need, pace_health = PACES[game["pace"]]
+    weather = game["weather"]
+    speed = WEATHER[weather][0]
+    if speed == 0:
+        print(f"\n{weather}太大了, 车根本开不动, {everyone(game)}只能躲在车里等了一天。")
+        pass_day(game, indoors=True)
+        return
     if s["燃料"] < fuel_need:
         print("\n燃料不够, 车开不动了! 试试换慢一点的速度, 或者去搜刮废墟找燃料。")
         return
     s["燃料"] -= fuel_need
-    weather = game["weather"]
-    speed = WEATHER[weather][1]
     km = round((km + random.randint(-10, 10)) * speed)
     km = min(km, TOTAL_DISTANCE - game["distance"])   # 最后一段路不多算
     game["distance"] += km
@@ -546,6 +783,33 @@ def hunt(game):
     if hunter and typed == word and seconds <= 6:
         print(f"(猎人{hunter}帮忙收拾猎物, 肉多了一半。)")
     pass_day(game)
+
+
+def take_medicine(game):
+    """主菜单的「用药」: 选用药品治伤, 还是用排辐剂排辐射"""
+    s = game["supplies"]
+    print(f"\n1. 药品 (现在有 {s['药品']}): 治伤, 给健康最低的人用")
+    print(f"2. 排辐剂 (现在有 {s['排辐剂']}): 排掉 {ANTI_RAD} 点辐射, 给辐射最高的人用")
+    print("0. 不用了")
+    choice = ask_number("用哪种药? ", 0, 2)
+    if choice == 1:
+        use_medicine(game)
+    elif choice == 2:
+        use_anti_rad(game)
+
+
+def use_anti_rad(game):
+    s = game["supplies"]
+    if s["排辐剂"] == 0:
+        print("\n你没有排辐剂了。")
+        return
+    name = max(game["party"], key=lambda n: game["rads"].get(n, 0))   # 找辐射最高的人
+    if game["rads"].get(name, 0) == 0:
+        print("\n现在没人受到辐射, 不需要用排辐剂。")
+        return
+    s["排辐剂"] -= 1
+    irradiate(game, name, -ANTI_RAD)
+    print(f"\n{name} 打了一针排辐剂, 辐射降到了 {game['rads'][name]}。")
 
 
 def use_medicine(game):
@@ -634,7 +898,7 @@ def offer_recruit(game, place, km=None):
         print(f"这里有个叫 {name} 的{job}也想往西走, 可惜你们的车已经坐满了。")
         return
     print(f"这里有个叫 {name} 的{job}也想往西走, 愿意跟{you(game)}一起。")
-    print(f"特长: {SKILLS[job]}。但多一个人, 每天也要多吃多喝。")
+    print(f"特长: {SKILLS[job]}。但多一个人, 每天也要多吃多喝, 天冷时还要多一套冬衣。")
     if ask_number(f"1. 让{name}加入  2. 不用了  ", 1, 2) == 1:
         game["party"][name] = 100
         game["jobs"][name] = job
@@ -645,14 +909,7 @@ def offer_recruit(game, place, km=None):
 
 
 # ========== 随机事件(想加新事件就照着写一个函数, 再放进 EVENTS) ==========
-
-def radiation_storm(game):
-    days = random.randint(1, 2)
-    print(f"\n【辐射风暴】天空变成了绿色! {you(game)}躲了 {days} 天, 还是受到了辐射。")
-    write_diary(game, f"遇到辐射风暴, 躲了 {days} 天。")
-    for _ in range(days):
-        pass_day(game, indoors=True)
-    change_all_health(game, -10)
+# (辐射风暴以前是随机事件, 现在是天气, 写在 roll_weather 里)
 
 
 def raiders(game):
@@ -741,9 +998,10 @@ def mutant_attack(game):
 
 def radiation_sickness(game):
     victim = random_member(game)
-    print(f"\n【辐射病】{victim} 开始掉头发、发烧, 得了辐射病。")
+    irradiate(game, victim, SICKNESS_RADS)
+    print(f"\n【辐射病】{victim} 开始掉头发、发烧, 身体里积了太多辐射 (辐射升到了 {game['rads'][victim]})。")
+    print("不用排辐剂排掉的话, 辐射会一天天折磨人。")
     write_diary(game, f"{victim} 得了辐射病。")
-    hurt(game, victim, 25)
 
 
 def bad_water(game):
@@ -843,7 +1101,7 @@ def radio_signal(game):
         raiders(game)
 
 
-EVENTS = [radiation_storm, raiders, breakdown, warehouse,
+EVENTS = [raiders, breakdown, warehouse,
           mutant_attack, radiation_sickness, bad_water, trader,
           stranger, minefield, radio_signal]
 
@@ -859,8 +1117,9 @@ def random_event(game, km):
 
 def arrive(game):
     """到达俄勒冈城, 根据路上的情况决定是哪个结局"""
-    print(f"\n{you(game)}到达了{DESTINATION}! 一共用了 {game['day'] - 1} 天。")
-    write_diary(game, f"到达了{DESTINATION}!", day=game["day"] - 1)
+    last_day = game["day"] - 1
+    print(f"\n{date_text(game, last_day)}, {you(game)}到达了{DESTINATION}! 一共用了 {last_day} 天。")
+    write_diary(game, f"到达了{DESTINATION}!", day=last_day)
     print(f"活下来的人: {'、'.join(game['party'])}")
     if game["dead"]:
         print(f"路上失去的人: {'、'.join(game['dead'])}")
@@ -910,6 +1169,10 @@ def load_game():
         return None
     game = new_game()   # 先放好默认值, 这样旧版本的存档少了什么也不怕
     game.update(saved)
+    for item in PRICES:   # 旧存档里没有后来才加的物资 (比如冬衣)
+        game["supplies"].setdefault(item, 0)
+    if game["weather"] not in WEATHER:   # 旧版本的天气 (比如"晴朗""酷热") 现在没有了
+        game["weather"] = "晴"
     return game
 
 
@@ -925,13 +1188,14 @@ def main():
     print("========== 废土之旅 ==========")
     game = load_game()
     if game:
-        print(f"发现存档: 第 {game['day']} 天, 已经走了 {show_distance(game, game['distance'])}。")
+        print(f"发现存档: {date_text(game)} (第 {game['day']} 天), "
+              f"已经走了 {show_distance(game, game['distance'])}。")
         if ask_number("1. 继续上次的游戏  2. 开始新游戏  ", 1, 2) == 2:
             game = None
     if not game:
         game = new_game()
         setup(game)
-    actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: use_medicine,
+    actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: take_medicine,
                6: change_ration, 7: change_pace, 8: show_party, 9: show_diary}
 
     while True:
@@ -944,7 +1208,7 @@ def main():
             break
 
         show_status(game)
-        print("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 使用药品  "
+        print("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 用药  "
               "6. 改变口粮  7. 改变速度  8. 查看队伍  9. 旅行日记  10. 存档")
         choice = ask_number("你要做什么? ", 1, 10)
         if choice == 10:
