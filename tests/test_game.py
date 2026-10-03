@@ -356,13 +356,13 @@ class GameTest(unittest.TestCase):
         game = w.new_game()
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.setup(game)
-        game["distance"] = 510   # 一路开到卡尼堡, 带上杰克, 不买东西
+        game["distance"] = 510   # 一路开到卡尼堡 (河都绑上油桶浮过去), 带上杰克, 不买东西
         with mock.patch("builtins.input", lambda p="": "1" if "加入" in p else "2"), \
-                redirect_stdout(io.StringIO()):
+                mock.patch.object(w, "FLOAT_RISK", 0), redirect_stdout(io.StringIO()):
             w.check_places(game)
             w.hurt(game, "杰克", 100)
         diary = "\n".join(game["diary"])
-        for words in ["小明被赶出了独立城地下的避难所", "经过了堪萨斯河渡口", "到了卡尼堡",
+        for words in ["小明被赶出了独立城地下的避难所", "把车浮过了堪萨斯河", "把车浮过了大蓝河", "到了卡尼堡",
                       "老兵杰克在卡尼堡加入了队伍", "杰克 去世了", "5月1日 (第 1 天), 已走 510 公里"]:
             self.assertIn(words, diary)
         screen = io.StringIO()
@@ -574,7 +574,7 @@ class GameTest(unittest.TestCase):
         old["weather"] = "酷热"
         del old["supplies"]["冬衣"]
         del old["supplies"]["排辐剂"]
-        for key in ["start_month", "temperature", "warmth", "rads", "sick"]:
+        for key in ["start_month", "temperature", "warmth", "rads", "sick", "rain"]:
             del old[key]
         with open(w.SAVE_FILE, "w", encoding="utf-8") as f:
             json.dump(old, f, ensure_ascii=False)
@@ -952,6 +952,174 @@ class GameTest(unittest.TestCase):
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.main()
         self.assertFalse(os.path.exists(w.SAVE_FILE))
+
+    # ---------- 过河 ----------
+
+    def cross(self, game, place, answers, depth):
+        """在 place 这条河边, 按顺序回答 answers 过河; 河水深度固定是 depth (一个数, 或者每天一个的列表)。
+        返回屏幕上的字"""
+        depths = iter(depth if isinstance(depth, list) else [depth] * 100)
+        keys = iter(answers)
+        screen = io.StringIO()
+        with mock.patch("builtins.input", lambda p="": next(keys)), \
+                mock.patch.object(w, "river_depth", lambda game, place: next(depths)), \
+                no_new_diseases(), redirect_stdout(screen):
+            w.cross_river(game, place)
+        return screen.getvalue()
+
+    def test_rivers_are_landmarks(self):
+        """要过的河都是路上的地标, 渡船的钱是正数 (没有渡船就是 None)"""
+        landmarks = [name for name, _ in w.LANDMARKS.values()]
+        for place, (river, width, depth, fare) in w.RIVERS.items():
+            self.assertIn(place, landmarks)
+            self.assertGreater(width, 0)
+            self.assertGreater(depth, 0)
+            self.assertTrue(fare is None or fare > 0)
+        self.assertEqual(len(w.RIVER_SEASON), 12)
+
+    def test_status_shows_river_ahead(self):
+        game = new_test_game()
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.show_status(game)
+        self.assertIn("下一站: 堪萨斯河渡口 (要过河)", screen.getvalue())
+
+    def test_drive_through_shallow_water(self):
+        """水不比车能开过的深, 直接开过去什么事都没有, 也不花时间"""
+        game = new_test_game()
+        text = self.cross(game, "大蓝河", ["1"], w.CAR_WADE_DEPTH)
+        self.assertIn("车稳稳地蹚过了大蓝河", text)
+        self.assertEqual(game["supplies"]["食物"], 100)
+        self.assertEqual(game["day"], 1)
+        self.assertIn("直接开车过了大蓝河", game["diary"][-1])
+
+    def test_engine_gets_wet(self):
+        """水比车能开过的深一点: 发动机进水, 泡了水的食物要扔掉四分之一, 还要花一天晾干"""
+        game = new_test_game()
+        text = self.cross(game, "大蓝河", ["1"], 0.9)
+        self.assertIn("发动机进水熄火了", text)
+        self.assertEqual(game["day"], 2)
+        self.assertEqual(game["supplies"]["食物"], 100 - 25 - 8)   # 扔掉 25 份, 晾车那天 4 个人又吃了 8 份
+
+    def test_car_tips_over_in_deep_water(self):
+        """水太深还硬开过去, 车会被冲翻: 东西被冲走, 掉进河里的人受辐射, 还可能有人被冲走"""
+        game = new_test_game()
+        with mock.patch.object(w.random, "random", lambda: 0), \
+                mock.patch.object(w.random, "randint", lambda low, high: low):
+            text = self.cross(game, "大蓝河", ["1"], 1.0)
+        self.assertIn("【翻车】", text)
+        for item in game["supplies"]:
+            self.assertEqual(game["supplies"][item], 80)   # 每样东西都冲走了 20%
+        self.assertEqual(len(game["party"]), 3)
+        self.assertEqual(len(game["dead"]), 1)
+        self.assertIn("被大蓝河的急流冲走了", text)
+        for name in game["party"]:
+            self.assertEqual(game["rads"][name], w.RIVER_RADS)
+        self.assertIn("好不容易把车拖上了对岸", text)
+
+    def test_float_across(self):
+        """绑上空油桶浮过去: 水再深也能过, 可是有机会翻车, 水越深越容易翻"""
+        game = new_test_game()
+        with mock.patch.object(w.random, "random", lambda: 0.99):
+            text = self.cross(game, "格林河", ["2"], 2.5)
+        self.assertIn("车平平安安地漂到了对岸", text)
+        self.assertEqual(game["supplies"]["食物"], 100)
+        # 翻车的机会: 0.8 米深是 10%, 2 米深是 20%
+        with mock.patch.object(w.random, "random", lambda: 0.15):
+            self.assertNotIn("【翻车】", self.cross(new_test_game(), "格林河", ["2"], 0.8))
+            self.assertIn("【翻车】", self.cross(new_test_game(), "格林河", ["2"], 2.0))
+
+    def test_ferry(self):
+        """坐渡船要花钱, 钱不够坐不了; 没有渡船的河不能选渡船"""
+        game = new_test_game()
+        game["money"] = 100
+        with mock.patch.object(w, "FERRY_WAIT", 0):
+            text = self.cross(game, "格林河", ["4"], 2.5)
+        fare = w.RIVERS["格林河"][3]
+        self.assertEqual(game["money"], 100 - fare)
+        self.assertIn(f"花 {fare} 块钱坐渡船过了格林河", game["diary"][-1])
+        self.assertIn("坐渡船", text)
+
+        game = new_test_game()
+        game["money"] = fare - 1
+        with mock.patch.object(w.random, "random", lambda: 0.99):
+            text = self.cross(game, "格林河", ["4", "2"], 2.5)   # 钱不够, 只好浮过去
+        self.assertIn("你的钱不够", text)
+        self.assertEqual(game["money"], fare - 1)
+
+        game = new_test_game()
+        text = self.cross(game, "大蓝河", ["4", "1"], 0.5)   # 大蓝河没有渡船, 只能选 1~3
+        self.assertNotIn("坐渡船", text)
+        self.assertIn("请输入 1 到 3 之间的数字", text)
+
+    def test_ferry_queue_takes_days(self):
+        game = new_test_game()
+        with mock.patch.object(w.random, "randint", lambda low, high: high):
+            text = self.cross(game, "堪萨斯河渡口", ["4"], 2.0)
+        self.assertIn(f"等了 {w.FERRY_WAIT} 天才轮到", text)
+        self.assertEqual(game["day"], 1 + w.FERRY_WAIT)
+
+    def test_wait_for_water_to_go_down(self):
+        """在河边等一天, 第二天水深会变"""
+        game = new_test_game()
+        text = self.cross(game, "大蓝河", ["3", "1"], [1.0, 0.5])
+        self.assertIn("等了一天", text)
+        self.assertIn("河水退了一些", text)
+        self.assertIn("今天水深 0.5 米", text)
+        self.assertEqual(game["day"], 2)
+        self.assertIn("直接开车过了大蓝河", game["diary"][-1])
+
+    def test_mechanic_snorkel(self):
+        """有机械师的话, 车能开过更深的水"""
+        self.assertEqual(w.wade_depth(new_test_game()), w.CAR_WADE_DEPTH)
+        game = self.with_job("机械师")
+        self.assertEqual(w.wade_depth(game), 0.9)
+        text = self.cross(game, "蛇河渡口", ["1"], 0.9)
+        self.assertIn("通气管", text)
+        self.assertIn("车稳稳地蹚过了蛇河", text)
+
+    def test_river_depth_follows_season_and_rain(self):
+        """河水 5、6 月最深, 秋天浅; 这几天下了雨雪, 河水会涨"""
+        game = new_test_game()
+        with mock.patch.object(w.random, "uniform", lambda low, high: 1):
+            game["start_month"] = 6
+            self.assertEqual(w.river_depth(game, "格林河"), 2.2)   # 1.6 米 x 1.4
+            game["start_month"] = 9
+            self.assertEqual(w.river_depth(game, "格林河"), 1.1)   # 1.6 米 x 0.7
+            game["start_month"] = 6
+            game["rain"] = 3
+            self.assertEqual(w.river_depth(game, "格林河"), 2.9)   # 再涨三成
+        # 每天的天气会记下这几天下了多少雨雪
+        game["rain"] = 2
+        with redirect_stdout(io.StringIO()):
+            w.roll_weather(game)
+        wet = 1 if game["weather"] in w.WET_WEATHER else 0
+        self.assertEqual(game["rain"], round(2 * w.RAIN_FADE + wet, 2))
+
+    def test_river_lengths_in_feet(self):
+        game = new_test_game()
+        self.assertEqual(w.show_length(game, 1.2), "1.2 米")
+        self.assertEqual(w.show_length(game, 190), "190 米")
+        game["unit"] = "英里"
+        self.assertEqual(w.show_length(game, 1.2), "3.9 英尺")
+        self.assertEqual(w.show_length(game, 190), "623 英尺")
+
+    def test_drive_to_river_then_cross(self):
+        """赶路时开过河的位置, 就要过河; 过了以后不会再问"""
+        game = new_test_game()
+        game["distance"] = 100
+        game["money"] = 100
+        screen = io.StringIO()
+        with mock.patch("builtins.input", lambda p="": "4" if "怎么过河" in p else "2"), \
+                mock.patch.multiple(w, FERRY_WAIT=0, EVENT_CHANCE_PER_100KM=0), redirect_stdout(screen):
+            w.travel(game)
+            w.check_places(game)
+        self.assertEqual(screen.getvalue().count("来到了【堪萨斯河渡口】"), 1)
+        self.assertEqual(screen.getvalue().count("交了"), 1)
+        self.assertEqual(game["money"], 100 - w.RIVERS["堪萨斯河渡口"][3])
+        self.assertGreater(game["distance"], 130)   # 过了河接着开完今天的路
+        crossed = [line for line in game["diary"] if "坐渡船过了堪萨斯河" in line]
+        self.assertIn("已走 130 公里", crossed[0])  # 日记里记的是河的位置
 
     # ---------- 过场动画 ----------
 

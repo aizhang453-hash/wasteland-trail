@@ -26,7 +26,7 @@ SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.j
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v2.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v2.2"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -68,6 +68,30 @@ LANDMARKS = {
     2596: ("大圆谷", "被群山围起来的一大片圆形草地, 拓荒者在这里歇脚, 准备翻越蓝山。"),
     2651: ("蓝山", "远远看去山是蓝色的。当年拓荒者要一路砍树开路, 车才能翻过去。"),
 }
+
+# ---------- 过河 ----------
+
+# 路上要过的大河 (都在上面的地标里, 车开到河边会停下来): 地标名字 -> (河名, 河面宽几米, 平常水深几米, 坐渡船要几块钱)
+# 渡船是 None 的地方没有渡船。当年的拓荒者要么赶着马车蹚过去, 要么把车厢的缝塞住、像船一样漂过去, 要么花钱坐渡船
+RIVERS = {
+    "堪萨斯河渡口": ("堪萨斯河", 190, 0.9, 5),
+    "大蓝河": ("大蓝河", 60, 0.6, None),
+    "北普拉特河渡口": ("北普拉特河", 100, 0.9, 10),
+    "格林河": ("格林河", 120, 1.6, 15),
+    "蛇河渡口": ("蛇河", 300, 1.2, None),
+}
+# 河水按月份涨落: 春天山里的雪化了, 5、6 月水最深, 秋天水最浅。1 月到 12 月, 每个月是平常水深的几倍
+RIVER_SEASON = [0.7, 0.7, 0.9, 1.1, 1.3, 1.4, 1.1, 0.8, 0.7, 0.7, 0.8, 0.7]
+RAIN_RISE = 0.1         # 这几天每下一天雨雪, 河水涨一成
+RAIN_FADE = 0.7         # 雨雪停了以后, 涨起来的水每天退掉三成
+CAR_WADE_DEPTH = 0.6    # 车能直接开过多深的水 (米), 再深发动机就会进水
+SNORKEL_DEPTH = 0.3     # 有机械师的话, 他给车接上通气管, 车能多开过这么深的水
+SOAK_DEPTH = 0.3        # 水比车能开过的深度再深这么多以内, 只是发动机进水; 再深, 车就会被急流冲翻
+SOAK_FOOD = 4           # 发动机进水时, 泡了河水的食物要扔掉几分之一
+FLOAT_RISK = 0.1        # 绑上空油桶浮过去时翻车的机会; 水比 1 米每深 1 米, 再多这么多
+DROWN_CHANCE = 0.2      # 车在河里翻了, 有人被冲走的机会
+RIVER_RADS = 10         # 车翻了掉进河里, 每个人受多少辐射 (河水也被污染了)
+FERRY_WAIT = 2          # 坐渡船最多要排几天队
 
 # 商店价格(每个多少钱)
 PRICES = {"食物": 1, "水": 1, "燃料": 4, "子弹": 1, "零件": 20, "药品": 15, "冬衣": 10, "排辐剂": 20}
@@ -251,7 +275,7 @@ RECRUIT_BRINGS = {"食物": 60, "水": 40}
 SKILLS = {
     "老兵": "遇到劫匪开枪一定能打赢, 赶走野狗只要 5 发子弹",
     "医生": "用药一次能恢复 60 点健康 (平时是 35); 有医生照顾, 别人生病受伤好得更快",
-    "机械师": "车坏了不用零件也能当场修好",
+    "机械师": "车坏了不用零件也能当场修好; 过河时给车接上通气管, 车能开过更深的水",
     "猎人": "打猎得到的肉多一半",
     "商人": "在据点买东西打八折",
     "拾荒者": "搜刮废墟一定有收获, 一次能找到两样东西",
@@ -387,6 +411,17 @@ def show_weight(game, grams):
     return f"{round(value, 2):g} {name}"   # 很轻的东西留两位小数, 比如子弹 0.02 公斤
 
 
+def show_length(game, meters):
+    """河有多宽、多深: 选了公里就用米, 选了英里就用英尺。比如 show_length(game, 1.2) 是 "1.2 米" """
+    if game["unit"] == "英里":
+        value, name = meters * 3.28084, "英尺"
+    else:
+        value, name = meters, "米"
+    if value >= 10:
+        return f"{round(value)} {name}"
+    return f"{round(value, 1):g} {name}"
+
+
 def load_of(game):
     """车上现在有多重 (克): 人加上所有物资"""
     stuff = sum(game["supplies"][item] * WEIGHTS[item] for item in WEIGHTS)
@@ -467,16 +502,22 @@ def show_diary(game):
 def check_deaths(game):
     for name in list(game["party"]):
         if game["party"][name] <= 0:
-            del game["party"][name]
-            game["rads"].pop(name, None)
-            sick = game["sick"].pop(name, None)
-            game["dead"].append(name)
+            sick = game["sick"].get(name)
             if sick:
-                print(f"!!! {name} 死于{sick[0]}。")
-                write_diary(game, f"{name} 死于{sick[0]}。")
+                lose_member(game, name, f"死于{sick[0]}。")
             else:
-                print(f"!!! {name} 没能撑下去, 去世了。")
-                write_diary(game, f"{name} 去世了。")
+                lose_member(game, name, "没能撑下去, 去世了。", "去世了。")
+
+
+def lose_member(game, name, saying, diary_saying=None):
+    """一个队员没了: 从队伍里去掉, 记进日记。
+    saying 是屏幕上怎么说, diary_saying 是日记里怎么写 (不填就跟屏幕上一样)"""
+    del game["party"][name]
+    game["rads"].pop(name, None)
+    game["sick"].pop(name, None)
+    game["dead"].append(name)
+    print(f"!!! {name} {saying}")
+    write_diary(game, f"{name} {diary_saying or saying}")
 
 
 def hurt(game, name, amount):
@@ -659,6 +700,8 @@ def roll_weather(game):
 
     game["weather"] = weather
     game["temperature"] = temperature
+    # 这几天下了多少雨雪 (河水会跟着涨): 以前下的慢慢退掉, 今天下了就再加 1
+    game["rain"] = round(game["rain"] * RAIN_FADE + (1 if weather in WET_WEATHER else 0), 2)
     if weather in DIARY_WEATHER and weather != old_weather:
         write_diary(game, f"遇到了{weather}。")
 
@@ -679,6 +722,7 @@ def new_game():
         "weather": "晴",
         "temperature": 20,  # 今天白天的最高气温 (摄氏度)
         "warmth": 0,        # 这几天比平常热几度 (负数是冷)
+        "rain": 0,          # 这几天下了多少雨雪 (下得越多, 河水越深)
         "visited": [],      # 已经到过的据点
         "seeds": False,     # 有没有找到种子库(隐藏结局)
         "gender": "男",     # 主角的性别
@@ -714,6 +758,7 @@ def setup(game):
     print("提示: 每人每天要吃食物、喝 1 份水, 车每天要用燃料。子弹可以打猎, 也可以防身。"
           "天冷时每人要有一套冬衣。")
     print("      路上会生病受伤, 药品能治好; 辐射会在身体里越积越多, 只有排辐剂能把它排掉。")
+    print("      路上要过好几条大河, 有的河边有渡船, 坐渡船要花钱, 别把钱一下子全花光。")
     shop(game)
 
 
@@ -776,8 +821,13 @@ def show_status(game):
     print(f"口粮: {RATIONS[game['ration']][0]}  速度: {PACES[game['pace']][0]}"
           f"  载重: {show_weight(game, load_of(game))} / {show_weight(game, CAR_CAPACITY)}")
     name, km = next_place(game)
-    shop_note = " (据点, 可以买东西)" if name in [n for n, _ in OUTPOSTS.values()] else ""
-    print(f"下一站: {name}{shop_note}, 还有 {show_distance(game, km - game['distance'])}")
+    if name in [n for n, _ in OUTPOSTS.values()]:
+        note = " (据点, 可以买东西)"
+    elif name in RIVERS:
+        note = " (要过河)"
+    else:
+        note = ""
+    print(f"下一站: {name}{note}, 还有 {show_distance(game, km - game['distance'])}")
     if game["seeds"]:
         print("车上带着: 种子库的种子")
 
@@ -1127,6 +1177,13 @@ def check_places(game):
     for km, name, intro, can_shop in sorted(places):
         if not reached(game, km, name):
             continue
+        if name in RIVERS:
+            print(f"\n{you(game)}来到了【{name}】。{intro}")
+            day_end = game["distance"]
+            game["distance"] = km        # 等水退、过河的时候, 车停在河边 (日记、天气都按河边算)
+            cross_river(game, name)
+            game["distance"] = day_end   # 过了河, 接着开完今天的路
+            continue
         if not can_shop:
             print(f"\n{you(game)}经过了【{name}】。{intro}")
             write_diary(game, f"经过了{name}。", km)
@@ -1163,6 +1220,136 @@ def offer_recruit(game, place, km=None):
         write_diary(game, f"{job}{name}在{place}加入了队伍。", km)
     else:
         print(f"{name} 点点头, 留在了{place}。")
+
+
+# ========== 过河 ==========
+
+def river_depth(game, place):
+    """今天这条河有多深 (米, 只留一位小数): 平常的水深, 按月份涨落, 这几天下了雨雪还会涨, 每天再有一点随机变化"""
+    month = date_of(game)[0]
+    depth = RIVERS[place][2] * RIVER_SEASON[month - 1] * (1 + RAIN_RISE * game["rain"])
+    return round(depth * random.uniform(0.85, 1.15), 1)
+
+
+def wade_depth(game):
+    """车能直接开过多深的水 (米)。有机械师的话, 他会给车接上通气管, 能开过更深的水"""
+    extra = SNORKEL_DEPTH if skilled(game, "机械师") else 0
+    return round(CAR_WADE_DEPTH + extra, 1)   # 只留一位小数, 不然 0.6 + 0.3 会算成 0.8999…
+
+
+def cross_river(game, place):
+    """到了河边: 直接开过去、绑上空油桶浮过去、等水退, 有渡船的地方还能花钱坐渡船。
+    不过河就没法往前走, 所以一直问到过了河 (或者人都没了) 为止"""
+    river, width, _, fare = RIVERS[place]
+    depth = river_depth(game, place)
+    mechanic = skilled(game, "机械师")
+    if mechanic:
+        print(f"机械师{mechanic}给车接上了一根通气管, 车能开过更深的水。")
+    while game["party"]:
+        print(f"\n{river}河面宽 {show_length(game, width)}, 今天水深 {show_length(game, depth)}。")
+        print(f"1. 直接开过去 (车能开过 {show_length(game, wade_depth(game))}深的水, "
+              f"再深发动机会进水, 太深车会被冲翻)")
+        print("2. 绑上空油桶, 把车浮过去 (水再深也能过, 可是有可能翻车)")
+        print("3. 在河边等一天, 看水会不会退")
+        if fare:
+            print(f"4. 坐渡船 (要 {fare} 块钱, 你有 {game['money']} 块。最安全, 可能要排队)")
+        choice = ask_number("怎么过河? ", 1, 4 if fare else 3)
+        if choice == 1:
+            ford_river(game, place, depth)
+        elif choice == 2:
+            float_river(game, place, depth)
+        elif choice == 3:
+            print(f"\n{everyone(game)}在{river}边等了一天。")
+            pass_day(game, indoors=True)
+            new_depth = river_depth(game, place)
+            if new_depth < depth:
+                print("河水退了一些。")
+            elif new_depth > depth:
+                print("河水又涨了。")
+            else:
+                print("河水跟昨天差不多。")
+            depth = new_depth
+            continue
+        elif game["money"] < fare:
+            print("\n你的钱不够, 坐不了渡船。")
+            continue
+        else:
+            take_ferry(game, place)
+        return
+
+
+def ford_river(game, place, depth):
+    """直接把车开过河: 水浅没事; 稍微深一点, 发动机进水, 要花一天晾干; 太深, 车会被冲翻"""
+    river = RIVERS[place][0]
+    limit = wade_depth(game)
+    if depth <= limit:
+        print(f"\n车稳稳地蹚过了{river}。")
+        write_diary(game, f"直接开车过了{river}。")
+    elif depth <= round(limit + SOAK_DEPTH, 1):
+        s = game["supplies"]
+        spoiled = s["食物"] // SOAK_FOOD
+        s["食物"] -= spoiled
+        print("\n车开到河中间, 河水漫过了车门, 发动机进水熄火了!")
+        print(f"{everyone(game)}好不容易把车推上了对岸, 泡了脏河水的 {spoiled} 份食物不能吃了。")
+        print("又花了一天, 才把发动机晾干。")
+        write_diary(game, f"开车过{river}时发动机进了水, 扔掉了 {spoiled} 份食物, 晾了一天车。")
+        pass_day(game)
+    else:
+        capsize(game, place, f"开车过{river}")
+
+
+def float_river(game, place, depth):
+    """绑上空油桶, 让车像船一样漂过去。水越深, 水流越急, 越容易翻车"""
+    river = RIVERS[place][0]
+    print(f"\n{you(game)}把空油桶绑在车身四周, 车像船一样, 慢慢漂向对岸……")
+    if random.random() < FLOAT_RISK * (1 + max(0, depth - 1)):
+        capsize(game, place, f"把车浮过{river}")
+    else:
+        print("车平平安安地漂到了对岸。")
+        write_diary(game, f"绑上空油桶, 把车浮过了{river}。")
+
+
+def take_ferry(game, place):
+    """花钱坐渡船: 最安全, 可是渡口常常排着队"""
+    river, _, _, fare = RIVERS[place]
+    game["money"] -= fare
+    wait = random.randint(0, FERRY_WAIT)
+    if wait:
+        print(f"\n渡口排着好几辆车, {you(game)}等了 {wait} 天才轮到。")
+        for _ in range(wait):
+            pass_day(game, indoors=True)
+            if not game["party"]:
+                return
+    print(f"\n{you(game)}交了 {fare} 块钱。摆渡的是一伙背着枪的幸存者, 他们拉着一根横过河面的钢缆, "
+          f"用废油桶和铁板扎成的大筏子把车送到了对岸。")
+    write_diary(game, f"花 {fare} 块钱坐渡船过了{river}。")
+
+
+def capsize(game, place, how):
+    """车在河里翻了: 物资被冲走一些, 掉进河里的人都受了辐射, 还可能有人被急流冲走。how 是怎么过河时翻的, 写进日记"""
+    river = RIVERS[place][0]
+    s = game["supplies"]
+    print(f"\n【翻车】车在{river}中间被急流冲翻了!")
+    lost = []
+    for item in s:
+        if s[item] and random.random() < 0.5:   # 每样东西有一半的机会被冲走一些
+            amount = max(1, s[item] * random.randint(20, 50) // 100)
+            s[item] -= amount
+            lost.append(f"{amount} {MEASURES[item]}{item}")
+    if lost:
+        print(f"被河水冲走了: {'、'.join(lost)}。")
+    if len(game["party"]) == 1:
+        print("你掉进了河里, 灌了好几口带辐射的河水。")
+    else:
+        print("车上的人全掉进了河里, 灌了好几口带辐射的河水。")
+    for name in game["party"]:
+        irradiate(game, name, RIVER_RADS)
+    write_diary(game, f"{how}时翻了车, 丢了不少东西。")
+    if random.random() < DROWN_CHANCE:
+        victim = random_member(game)
+        lose_member(game, victim, f"被{river}的急流冲走了, 再也没有上来。", f"被{river}的急流冲走了。")
+    if game["party"]:
+        print(f"{everyone(game)}好不容易把车拖上了对岸。")
 
 
 # ========== 随机事件(想加新事件就照着写一个函数, 再放进 EVENTS) ==========
@@ -1590,6 +1777,8 @@ def show_help():
   - 天气按走到哪里、几月份变。坏天气车开得慢, 酸雨和辐射风暴天最好躲在车里
   - 辐射会在身体里越积越多, 只有排辐剂能排掉
   - 健康越差越容易生病。生病了要休息, 或者用药品治
+  - 路上要过 5 条大河。水浅可以直接开过去, 水深了就绑上空油桶浮过去 (可能翻车),
+    有的河边有渡船, 花钱最安全。春天化雪、刚下过雨, 河水都会涨, 等几天水也许会退
   - 路上的据点能买东西, 每个据点还有一个人愿意跟你走
   - 带上队友更安全; 一个人走省吃省喝, 可生病了没人照顾
   - 3 月出发天冷, 7 月出发天热, 4~6 月最好走

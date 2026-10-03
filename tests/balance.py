@@ -25,7 +25,8 @@ RECRUIT = True
 
 def planner(game_box, screen, month):
     """会规划的玩家: 多买水 (夏天出发再多买一半), 每人一套冬衣, 留一支排辐剂备用, 到据点就补货、带上愿意加入的人,
-    缺吃的就打猎, 有人生病或受伤就用药, 辐射严重了就打排辐剂, 酸雨和辐射风暴天躲在车里休息"""
+    缺吃的就打猎, 有人生病或受伤就用药, 辐射严重了就打排辐剂, 酸雨和辐射风暴天躲在车里休息。
+    留着坐渡船的钱; 过河时水浅就开过去, 有渡船就坐渡船, 水只深一点就等两天看水退不退, 不然就浮过去"""
     thirst = 1.5 if month >= 6 else 1   # 夏天天热, 水要多带
     plan = ["1", "A", "1", str(month)]   # 单位、名字、性别、出发月份
     menu_visits = [0]
@@ -33,6 +34,7 @@ def planner(game_box, screen, month):
     shopping = [("1", 60), ("2", round(60 * thirst)), ("3", 70), ("4", 40), ("6", 1), ("7", 1), ("8", 1)]
     buying = []
     medicine = []   # 决定用药以后: [用哪一种 ("1" 药品, "2" 排辐剂), 给谁]
+    waited = Counter()   # 在每条河边等了几天
     count = [0]
 
     def answer(prompt=""):
@@ -65,9 +67,23 @@ def planner(game_box, screen, month):
                 buying[:] = [shopping.pop(0)]
                 return buying[0][0]
             return "0"
-        if "买多少" in prompt:
+        if "买多少" in prompt:                    # 留够前面坐渡船的钱
             most = int(prompt.split("最多")[1].split(")")[0])
-            return str(min(most, buying[0][1]))
+            item = list(w.PRICES)[int(buying[0][0]) - 1]
+            spare = max(0, game["money"] - ferry_money(game)) // w.PRICES[item]
+            return str(min(most, spare, buying[0][1]))
+        if "怎么过河" in prompt:
+            place = game["visited"][-1]
+            depth = float(re.findall(r"今天水深 ([\d.]+) 米", screen.getvalue())[-1])
+            fare = w.RIVERS[place][3]
+            if depth <= w.wade_depth(game):
+                return "1"
+            if fare and game["money"] >= fare:
+                return "4"
+            waited[place] += 1   # 水只比能开过的深一点, 就等两天看水退不退; 深得多就直接浮过去
+            if waited[place] <= 2 and depth <= round(w.wade_depth(game) + w.SOAK_DEPTH, 1):
+                return "3"
+            return "2"
         if "你怎么办" in prompt:                  # 劫匪就开枪, 雷区就慢慢开过去
             return "2"
         if "不用了" in prompt:                    # 据点里愿意跟着走的人: 带上
@@ -96,6 +112,15 @@ def planner(game_box, screen, month):
             return "1"
         return "1"
     return answer
+
+
+def ferry_money(game):
+    """前面还没过的河里, 坐渡船一共要多少钱"""
+    total = 0
+    for km, (place, _) in w.LANDMARKS.items():
+        if place in w.RIVERS and km > game["distance"] and w.RIVERS[place][3]:
+            total += w.RIVERS[place][3]
+    return total
 
 
 def month_for(seed):
