@@ -43,6 +43,11 @@ python3 -m unittest
 
 ## 许可证
 
-版权所有。可以下载来自己玩, 但没有作者的许可, 不能修改、转发、发布或者拿去赚钱。详见 [LICENSE](LICENSE)。
+本项目使用标准的 [PolyForm Strict License 1.0.0](LICENSE)。简单来说 (以英文原文为准):
+
+- 可以: 非商业用途, 比如下载来自己玩、自己学习研究
+- 不可以: 修改代码或内容、在它的基础上做新作品、转发或再发布、拿去商用
+
+想做"不可以"里的事, 请先在 [Issues](https://github.com/aizhang453-hash/wasteland-trail/issues) 联系作者, 拿到许可再说。
 
 v1.5 及以前的版本是按 MIT 许可证发布的, 那些版本仍然适用 MIT。
