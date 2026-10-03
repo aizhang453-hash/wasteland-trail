@@ -7,7 +7,19 @@
 import json
 import os
 import random
+import sys
 import time
+
+# 一个键一个键地读键盘: Mac 和 Linux 用 termios, Windows 用 msvcrt
+try:
+    import termios
+    import tty
+except ImportError:
+    termios = None
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 # 存档文件, 放在游戏文件旁边
 SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
@@ -106,8 +118,80 @@ STRANGER_NAMES = ["迈克", "安娜", "老乔", "凯特", "比尔"]
 
 # ========== 小工具 ==========
 
+def can_read_keys():
+    """是不是在真正的终端里玩, 能一个键一个键地读。跑测试或者用管道输入时就不是"""
+    return sys.stdin.isatty() and sys.stdout.isatty() and bool(termios or msvcrt)
+
+
+def start_reading_keys():
+    """让终端进入"按一个键就读一个键"的状态 (不用等回车, 按的键也不会自己显示出来)。
+    返回原来的设置, 用完要交给 stop_reading_keys 还原"""
+    if msvcrt:
+        return None
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    tty.setcbreak(fd)
+    return old_settings
+
+
+def stop_reading_keys(old_settings):
+    if old_settings is not None:
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_settings)
+
+
+def read_keys():
+    """读玩家刚按下的键。方向键这类特殊键会被丢掉, 返回空字符串"""
+    if msvcrt:
+        key = msvcrt.getwch()
+        if key in ("\x00", "\xe0"):   # 方向键之类, 后面还跟着一个字符, 一起丢掉
+            msvcrt.getwch()
+            return ""
+        return key
+    data = os.read(sys.stdin.fileno(), 64)
+    if data.startswith(b"\x1b"):        # 方向键之类会发来一串以 ESC 开头的字符
+        return ""
+    return data.decode("utf-8", errors="ignore")
+
+
 def ask_number(prompt, low, high):
-    """让玩家输入数字, 输错了就重新问"""
+    """让玩家输入 low 到 high 之间的数字。
+    只有数字键、退格键和回车有用, 按空格、字母这些键什么都不会发生;
+    回车也只在输入的数字在范围里时才算数"""
+    if not can_read_keys():
+        return ask_number_by_line(prompt, low, high)
+    print(prompt, end="", flush=True)
+    old_settings = start_reading_keys()
+    try:
+        return read_number(low, high)
+    finally:
+        stop_reading_keys(old_settings)   # 不管怎么结束 (包括按 Ctrl+C), 都要把终端还原
+
+
+def read_number(low, high):
+    text = ""
+    while True:
+        for key in read_keys():
+            if key == "\x03":                       # Ctrl+C
+                raise KeyboardInterrupt
+            if key in ("\x04", "\x1a"):             # Ctrl+D (Mac) 或 Ctrl+Z (Windows)
+                raise EOFError
+            if key in ("\r", "\n"):
+                if text and low <= int(text) <= high:
+                    print()
+                    return int(text)
+            elif key in ("\x7f", "\b"):             # 退格键: 删掉最后一个数字
+                if text:
+                    text = text[:-1]
+                    print("\b \b", end="", flush=True)
+            elif key.isdecimal():
+                digit = str(int(key))                 # 全角的 ３ 也当成 3
+                if text != "0" and int(text + digit) <= high:
+                    text += digit
+                    print(digit, end="", flush=True)
+
+
+def ask_number_by_line(prompt, low, high):
+    """不能一个键一个键读的时候 (比如跑测试), 就整行读, 输错了重新问"""
     while True:
         text = input(prompt).strip()
         if text.isdecimal() and low <= int(text) <= high:
@@ -433,10 +517,12 @@ def hunt(game):
     animal = random.choice(list(ANIMALS))
     word = random.choice(HUNT_WORDS)
     print(f"\n{you(game)}拿着枪出去打猎, 远处有一只{animal}……")
-    input("准备好了就按回车, 然后马上打出屏幕上的英文词, 再按回车! (记得先切换成英文输入法)")
+    print("按下回车后, 屏幕上会出现一个英文词。看到后马上把它打出来, 再按一次回车, 越快越好!")
+    print("(记得先切换成英文输入法)")
+    input("准备好了就按回车……")
     print(f"\n    >>> {word} <<<\n")
     start = time.time()
-    typed = input("> ").strip().lower()
+    typed = input("快打: ").strip().lower()
     seconds = time.time() - start
 
     low, high = ANIMALS[animal]

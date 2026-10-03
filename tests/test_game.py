@@ -55,6 +55,10 @@ def new_test_game():
 
 class GameTest(unittest.TestCase):
     def setUp(self):
+        # 测试时用整行读的方式输入数字 (测试替玩家"打字"时用的是假的 input)
+        patcher = mock.patch.object(w, "can_read_keys", lambda: False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         # 测试时把存档放到临时文件夹, 不碰玩家真正的存档
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -87,6 +91,31 @@ class GameTest(unittest.TestCase):
         answers = iter(["²", "abc", "", "9", "３"])
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             self.assertEqual(w.ask_number("? ", 1, 6), 3)   # 全角的 ３ 也算数
+
+    def fake_keyboard(self, keys):
+        """假装玩家在终端里一个键一个键地按 keys 里的键"""
+        return mock.patch.multiple(w, read_keys=lambda: next(keys),
+                                   start_reading_keys=lambda: None, stop_reading_keys=lambda old: None)
+
+    def test_ask_number_ignores_other_keys(self):
+        """在终端里选数字: 空格、字母、超出范围的数字、没输数字就按回车, 都不会有任何反应"""
+        keys = iter([" ", "\r", "a", "3", "\r", "1", "\x7f", "2", "\r"])   # 范围是 1~2
+        screen = io.StringIO()
+        with mock.patch.object(w, "can_read_keys", lambda: True), \
+                self.fake_keyboard(keys), redirect_stdout(screen):
+            self.assertEqual(w.ask_number("选哪个? ", 1, 2), 2)
+        self.assertEqual(screen.getvalue(), "选哪个? 1\b \b2\n")
+
+    def test_ask_number_two_digits(self):
+        """菜单有 10 项时, 能输 10; 不能输 11, 也不能在 0 后面接着打"""
+        keys = iter(["1", "1", "0", "\r"])
+        with mock.patch.object(w, "can_read_keys", lambda: True), \
+                self.fake_keyboard(keys), redirect_stdout(io.StringIO()):
+            self.assertEqual(w.ask_number("? ", 1, 10), 10)
+        keys = iter(["0", "5", "\r"])
+        with mock.patch.object(w, "can_read_keys", lambda: True), \
+                self.fake_keyboard(keys), redirect_stdout(io.StringIO()):
+            self.assertEqual(w.ask_number("? ", 0, 6), 0)
 
     def test_eat_what_is_left(self):
         """食物不够时有多少吃多少, 缺得越多掉血越多"""

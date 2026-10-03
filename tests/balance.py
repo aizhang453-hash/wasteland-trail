@@ -35,7 +35,7 @@ def planner(game_box, screen):
             return plan.pop(0)
         game = game_box[0]
         s, party = game["supplies"], game["party"]
-        if prompt == "> ":                       # 打猎: 打出屏幕上的词
+        if prompt == "快打: ":                    # 打猎: 打出屏幕上的词
             return re.findall(r">>> (\w+) <<<", screen.getvalue())[-1]
         if "要进去买东西" in prompt:              # 据点里把燃料、水、食物补到够用 (人越多要得越多)
             n = len(party)
