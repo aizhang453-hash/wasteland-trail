@@ -7,6 +7,7 @@ import io
 import json
 import os
 import random
+import re
 import sys
 import tempfile
 import unittest
@@ -33,12 +34,15 @@ def random_player(rng):
         if count[0] > 3000:
             raise StopGame
         if "选哪一项" in prompt:        # 主菜单: 还没玩过就大多开新游戏, 玩过一局回来就退出
-            return "4" if played[0] else rng.choice(["1", "1", "1", "2", "3"])
+            return "5" if played[0] else rng.choice(["1", "1", "1", "2", "3", "4"])
         if "买多少" in prompt:
             most = int(prompt.split("最多")[1].split(")")[0])
             return str(rng.randint(0, most // 3))
         if "买什么" in prompt:
-            return rng.choice(["0", "0", "1", "2", "3", "4", "5", "6", "7", "8"])
+            return rng.choice(["0", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
+        if "卖多少" in prompt:
+            most = int(prompt.split("最多")[1].split(")")[0])
+            return str(rng.randint(0, most))
         if "你要做什么" in prompt:      # 一半时候往前开, 这样才能走得远、遇到更多事
             played[0] = True
             return rng.choice(["1", "1", "1", "1", "1", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
@@ -82,6 +86,9 @@ class GameTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         patcher = mock.patch.object(w, "SAVE_FILE", os.path.join(tmp.name, "savegame.json"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(w, "HIGH_SCORE_FILE", os.path.join(tmp.name, "highscores.json"))
         patcher.start()
         self.addCleanup(patcher.stop)
         # 测试队伍的物资给得很足 (每样 100 个, 好几吨), 一般的测试就把车当成无限大
@@ -316,6 +323,33 @@ class GameTest(unittest.TestCase):
         self.assertEqual(game["money"], 20)   # 打八折, 只花了 80
         self.assertEqual(w.cost_of(game, "零件", 1), 16)
         self.assertEqual(w.cost_of(game, "食物", 1), 1)   # 有零头往上算
+
+    def test_sell_at_outpost(self):
+        """在据点能卖东西, 只给一半的价钱; 有商人能卖到六成。出发前的营地不能卖"""
+        game = new_test_game()
+        game["money"] = 0
+        answers = iter(["9", "4", "50", "9", "5", "1", "0"])   # 卖 50 发子弹, 再卖 1 个零件, 离开
+        screen = io.StringIO()
+        with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(screen):
+            w.shop(game, can_sell=True)
+        self.assertEqual(game["supplies"]["子弹"], 50)
+        self.assertEqual(game["supplies"]["零件"], 99)
+        self.assertEqual(game["money"], 25 + 10)   # 子弹 1 块一发卖一半 (25), 零件 20 块卖 10
+        self.assertIn("拿到 25 块钱", screen.getvalue())
+
+        merchant = self.with_job("商人")
+        self.assertEqual(w.sale_price(merchant, "零件", 1), 12)
+        self.assertEqual(w.sale_price(merchant, "食物", 5), 3)   # 零头不算
+        # 有商人时买 1 个零件 16 块, 卖掉只能拿回 12 块, 不能低买高卖赚钱
+        self.assertLess(w.sale_price(merchant, "零件", 1), w.cost_of(merchant, "零件", 1))
+
+        game = new_test_game()   # 出发前的营地: 没有「卖东西」, 选 9 不算数
+        answers = iter(["9", "0"])
+        screen = io.StringIO()
+        with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(screen):
+            w.shop(game)
+        self.assertNotIn("卖东西", screen.getvalue())
+        self.assertIn("请输入 0 到 8 之间的数字", screen.getvalue())
 
     def test_scavenger(self):
         """有拾荒者时, 搜刮废墟不会空手而归; 没遇到野狗就一次找到两样"""
@@ -948,7 +982,7 @@ class GameTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             w.save_game(game)
         # 主菜单选继续游戏, 休息一天 (饿死了), 按回车回到主菜单, 退出
-        answers = iter(["2", "2", "", "4"])
+        answers = iter(["2", "2", "", "5"])
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.main()
         self.assertFalse(os.path.exists(w.SAVE_FILE))
@@ -1121,6 +1155,229 @@ class GameTest(unittest.TestCase):
         crossed = [line for line in game["diary"] if "坐渡船过了堪萨斯河" in line]
         self.assertIn("已走 130 公里", crossed[0])  # 日记里记的是河的位置
 
+    # ---------- 最后一段路: 漂流还是走巴洛路 ----------
+
+    def last_road(self, game, choice, lane="水道"):
+        """在达尔斯选最后一段路 (choice 是 "1" 木筏 或 "2" 巴洛路)。过急流时选 lane ("水道" 或 "礁石") 那一边。
+        返回屏幕上的字"""
+        screen = io.StringIO()
+
+        def answer(prompt=""):
+            if "走哪条路" in prompt:
+                return choice
+            lanes = re.findall(r"左边(礁石|水道)  中间(礁石|水道)  右边(礁石|水道)", screen.getvalue())[-1]
+            if lane not in lanes:   # 三条都是水道时, 想撞礁石也撞不上
+                return "1"
+            return str(lanes.index(lane) + 1)
+        with mock.patch("builtins.input", answer), no_new_diseases(), redirect_stdout(screen):
+            w.choose_last_road(game, 2861)
+        return screen.getvalue()
+
+    def test_barlow_road(self):
+        """走巴洛路: 交过路费, 接着开车; 钱不够就只能坐木筏"""
+        game = new_test_game()
+        game["distance"] = 2900
+        game["money"] = 50
+        self.last_road(game, "2")
+        self.assertEqual(game["money"], 50 - w.BARLOW_TOLL)
+        self.assertEqual(game["distance"], 2900)
+        self.assertEqual(game["day"], 1)
+        self.assertIn("走巴洛路", game["diary"][-1])
+
+        game = new_test_game()
+        game["money"] = w.BARLOW_TOLL - 1
+        text = self.last_road(game, "2")
+        self.assertIn("钱不够交过路费", text)
+        self.assertEqual(game["money"], w.BARLOW_TOLL - 1)
+        self.assertEqual(game["distance"], w.TOTAL_DISTANCE)
+
+    def test_raft_trip(self):
+        """坐木筏: 不要钱、不用燃料, 扎木筏一天、漂一夜, 急流都躲开就什么都不丢, 直接到终点"""
+        game = new_test_game()
+        game["distance"] = 2900
+        text = self.last_road(game, "1")
+        self.assertEqual(text.count("【急流】"), w.RAPIDS)
+        self.assertNotIn("撞上了礁石", text)
+        self.assertEqual(game["distance"], w.TOTAL_DISTANCE)
+        self.assertEqual(game["day"], 3)                         # 扎木筏 1 天, 晚上靠岸 1 夜
+        self.assertEqual(game["supplies"]["燃料"], 100)
+        self.assertEqual(game["supplies"]["零件"], 100)
+        self.assertIn("已走 2861 公里: 在达尔斯扎了一个木筏", game["diary"][0])
+        self.assertIn("坐木筏顺着哥伦比亚河漂到了俄勒冈城", game["diary"][-1])
+
+    def test_rapids_hit_rocks(self):
+        """急流里选了有礁石的那边: 东西掉进河里, 有人撞伤 (或者被冲走)"""
+        game = new_test_game()
+        with mock.patch.object(w, "RAPID_HIT_DROWN", 0):
+            text = self.last_road(game, "1", lane="礁石")
+        self.assertIn("撞上了礁石", text)
+        self.assertIn("掉进河里冲走了", text)
+        self.assertEqual(len(game["party"]), 4)
+        self.assertLess(sum(game["supplies"].values()), 800)
+        self.assertTrue(any(game["rads"].get(name, 0) >= w.RIVER_RADS for name in game["party"]))
+
+        game = new_test_game()
+        with mock.patch.object(w, "RAPID_HIT_DROWN", 1), redirect_stdout(io.StringIO()):
+            w.hit_rock(game)
+        self.assertEqual(len(game["party"]), 3)
+        self.assertIn("被急流冲走了", game["diary"][-2])
+
+    def test_rapids_too_slow(self):
+        """选对了水道但太慢: 一半机会还是撞上礁石"""
+        for luck, crashed in [(0.1, True), (0.9, False)]:
+            game = new_test_game()
+            screen = io.StringIO()
+            with mock.patch.object(w.time, "time", side_effect=[0, w.RAPID_SECONDS + 1]), \
+                    mock.patch.object(w.random, "random", lambda: luck), \
+                    mock.patch.object(w.random, "randint", lambda low, high: low), \
+                    mock.patch.object(w.random, "sample", lambda items, n: list(items)[:n]), \
+                    mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(screen):
+                w.shoot_rapid(game, 1)   # 左边一定是水道 (sample 取前几个)
+            self.assertIn("太慢了" if crashed else "有点慢", screen.getvalue())
+            self.assertEqual("撞了上去" in screen.getvalue(), crashed)
+
+    def test_rapid_picture_lines_up(self):
+        for art in w.ROCK_ART + w.WATER_ART:
+            self.assertEqual(len(art), 8)
+
+    def test_no_events_after_arriving(self):
+        """开到终点那天, 不会再遇到路上的事件"""
+        game = new_test_game()
+        game["distance"] = w.TOTAL_DISTANCE - 10
+        game["visited"] = [name for name, _ in list(w.OUTPOSTS.values()) + list(w.LANDMARKS.values())]
+        screen = io.StringIO()
+        with mock.patch.object(w, "EVENT_CHANCE_PER_100KM", 1000), redirect_stdout(screen):
+            w.travel(game)
+        self.assertEqual(game["distance"], w.TOTAL_DISTANCE)
+        self.assertNotIn("【", screen.getvalue())
+
+    # ---------- 得分和最高分 ----------
+
+    def test_score(self):
+        """活下来的人按健康给分, 剩下的物资和钱也换成分"""
+        game = w.new_game()
+        game["party"] = {"A": 100, "B": 50, "C": 10}   # 良好 500、一般 400、危险 200
+        game["supplies"].update({"食物": 60, "燃料": 12, "子弹": 30, "零件": 1, "药品": 2})
+        game["money"] = 23
+        total, lines = w.score_of(game)
+        # 人 1100 + 食物 2 + 燃料 2 + 子弹 0 + 零件 2 + 药品 4 + 钱 4
+        self.assertEqual(total, 1100 + 2 + 2 + 2 + 4 + 4)
+        self.assertIn("B 健康一般: 400 分", lines)
+        self.assertIn("剩下 23 块钱: 4 分", lines)
+        self.assertFalse(any("子弹" in line for line in lines))   # 不够 1 分的不写
+        game["seeds"] = True
+        self.assertEqual(w.score_of(game)[0], total + w.SCORE_SEEDS)
+
+    def finish(self, score, name="A"):
+        """假装一局到达终点得了 score 分, 返回屏幕上的字"""
+        game = w.new_game()
+        game["leader"] = name
+        game["party"] = {name: 100}
+        game["day"] = 41
+        screen = io.StringIO()
+        with mock.patch.object(w, "score_of", lambda game: (score, [])), redirect_stdout(screen):
+            w.record_score(game, "独行结局")
+        return screen.getvalue()
+
+    def test_high_scores(self):
+        """最高分榜只记前 10 名, 从高到低; 分数一样时先得到的在前面"""
+        self.assertIn("进了最高分榜, 第 1 名", self.finish(500, "第一局"))
+        for i in range(10):
+            self.finish(1000 + i * 100, f"玩家{i}")
+        self.assertIn("第 1 名", self.finish(5000, "高手"))
+        text = self.finish(100, "新手")
+        self.assertIn("没能进前 10 名", text)
+        self.assertIn("第 4 名", self.finish(1800, "后来的"))   # 前面有 5000、1900, 还有先得到 1800 分的玩家8
+        scores = w.load_high_scores()
+        self.assertEqual(len(scores), w.HIGH_SCORES)
+        self.assertEqual([e["score"] for e in scores], sorted([e["score"] for e in scores], reverse=True))
+        self.assertEqual(scores[0], {"name": "高手", "score": 5000, "ending": "独行结局", "days": 40, "survivors": 1})
+        self.assertEqual([e["name"] for e in scores[2:4]], ["玩家8", "后来的"])
+        self.assertNotIn("第一局", [e["name"] for e in scores])
+
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.show_high_scores()
+        self.assertIn(" 1.  5000 分  高手  独行结局, 用了 40 天, 1 个人到达", screen.getvalue())
+
+    def test_broken_high_score_file(self):
+        """最高分文件坏了 (或者是别的东西), 当成空的, 不能报错"""
+        for content in ["坏掉的文件", "{}", '[1, {"name": "x"}]']:
+            with open(w.HIGH_SCORE_FILE, "w", encoding="utf-8") as f:
+                f.write(content)
+            self.assertEqual(w.load_high_scores(), [])
+            self.assertIn("第 1 名", self.finish(300))
+
+    def test_score_after_arriving(self):
+        """一局走到终点, 回顾完日记就算分、记进最高分榜; 全军覆没不算分"""
+        game = new_test_game()
+        game["leader"] = "A"
+        game["distance"] = w.TOTAL_DISTANCE
+        game["day"] = 30
+        screen = io.StringIO()
+        with mock.patch("builtins.input", lambda p="": ""), redirect_stdout(screen):
+            w.play(game)
+        text = screen.getvalue()
+        self.assertLess(text.index("旅行日记"), text.index("========== 得分"))
+        self.assertIn("完美结局", w.load_high_scores()[0]["ending"])
+        self.assertEqual(w.load_high_scores()[0]["days"], 29)
+
+        game = new_test_game()
+        game["party"] = {}
+        screen = io.StringIO()
+        with mock.patch("builtins.input", lambda p="": ""), redirect_stdout(screen):
+            w.play(game)
+        self.assertNotIn("得分", screen.getvalue())
+        self.assertEqual(len(w.load_high_scores()), 1)
+
+    # ---------- 颜色和进度条 ----------
+
+    def test_colored(self):
+        """在终端和网页版里上色, 跑测试 (不是终端) 或者设置里关掉了就不上色"""
+        self.assertEqual(w.colored("危险", "红"), "危险")
+        with mock.patch.object(w, "IN_BROWSER", True):
+            self.assertEqual(w.colored("危险", "红"), "\x1b[31m危险\x1b[0m")
+            self.assertEqual(w.colored("总分", "黄", bold=True), "\x1b[33;1m总分\x1b[0m")
+            self.assertEqual(w.colored("晴", None), "晴")
+            with mock.patch.object(w, "COLOR", False):
+                self.assertEqual(w.colored("危险", "红"), "危险")
+
+    def test_colors_do_not_change_the_words(self):
+        """开了颜色, 去掉颜色的控制字符以后, 屏幕上的字跟没颜色时一模一样"""
+        def screen_text():
+            game = new_test_game()
+            game["rads"] = {"B": 60}
+            game["sick"] = {"C": ["痢疾", 3]}
+            game["party"]["D"] = 30
+            game["weather"] = "辐射风暴"
+            random.seed(1)   # 两次过急流, 礁石的位置要一样
+            screen = io.StringIO()
+            with redirect_stdout(screen), mock.patch("builtins.input", lambda p="": "1"):
+                w.show_status(game)
+                w.show_party(game)
+                w.title_screen()
+                w.shoot_rapid(game, 1)
+            return screen.getvalue()
+        plain = screen_text()
+        with mock.patch.object(w, "IN_BROWSER", True):
+            fancy = screen_text()
+        self.assertNotIn("\x1b", plain)
+        self.assertIn("\x1b[", fancy)
+        self.assertEqual(re.sub(r"\x1b\[[\d;]*m", "", fancy), plain)
+
+    def test_progress_bars(self):
+        self.assertEqual(w.progress_bar(0, 100, 10), "[..........]")
+        self.assertEqual(w.progress_bar(72, 100, 10), "[#######...]")
+        self.assertEqual(w.progress_bar(150, 100, 4), "[####]")
+        game = new_test_game()
+        game["distance"] = w.TOTAL_DISTANCE // 2
+        game["party"]["B"] = 55
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.show_status(game)
+        self.assertIn("路程: [##########..........] 49%", screen.getvalue())
+        self.assertIn("  [######....] B 一般(55)", screen.getvalue())
+
     # ---------- 过场动画 ----------
 
     def test_scene_frames(self):
@@ -1181,22 +1438,22 @@ class GameTest(unittest.TestCase):
         return screen.getvalue()
 
     def test_title_screen_help_and_quit(self):
-        text = self.run_main(["3", "", "4"])   # 游戏说明, 按回车回来, 退出
+        text = self.run_main(["3", "", "4", "", "5"])   # 游戏说明, 按回车回来, 最高分, 按回车回来, 退出
         for words in ["废  土  之  旅", "W A S T E L A N D", w.VERSION, "1. 开始新游戏",
-                      "2. 继续游戏 (没有存档)", "游戏说明", "排辐剂", "下次再见"]:
+                      "2. 继续游戏 (没有存档)", "游戏说明", "排辐剂", "4. 最高分", "还没有人走到", "下次再见"]:
             self.assertIn(words, text)
 
     def test_continue_without_save(self):
-        text = self.run_main(["2", "", "4"])
+        text = self.run_main(["2", "", "5"])
         self.assertIn("还没有存档", text)
 
     def test_save_then_back_to_menu_then_continue(self):
         """开新游戏, 存档后回到主菜单, 主菜单上能看到存档, 选继续游戏能接着玩"""
         new_game = ["1", "1", "小明", "1", "5", "0"]   # 新游戏: 公里、名字、男、5 月、不买东西
-        text = self.run_main(new_game + ["10", "2", "4"])   # 存档, 回到主菜单, 退出
+        text = self.run_main(new_game + ["10", "2", "5"])   # 存档, 回到主菜单, 退出
         self.assertTrue(os.path.exists(w.SAVE_FILE))
         self.assertIn("继续游戏 (5月1日, 已走 0 公里)", text)
-        text = self.run_main(["2", "10", "2", "4"])   # 继续游戏, 马上又存档, 回到主菜单, 退出
+        text = self.run_main(["2", "10", "2", "5"])   # 继续游戏, 马上又存档, 回到主菜单, 退出
         self.assertIn("==== 5月1日 (第 1 天)", text)
 
     def test_new_game_over_old_save_asks_first(self):
@@ -1205,11 +1462,11 @@ class GameTest(unittest.TestCase):
         game["leader"] = "老存档"
         with redirect_stdout(io.StringIO()):
             w.save_game(game)
-        text = self.run_main(["1", "2", "4"])   # 开始新游戏, 不确定, 退出
+        text = self.run_main(["1", "2", "5"])   # 开始新游戏, 不确定, 退出
         self.assertIn("开始新游戏会把它删掉", text)
         self.assertEqual(w.load_game()["leader"], "老存档")
         new_game = ["1", "1", "1", "小明", "1", "5", "0"]   # 开始新游戏、确定、公里、名字、男、5 月、不买东西
-        self.run_main(new_game + ["10", "2", "4"])
+        self.run_main(new_game + ["10", "2", "5"])
         self.assertEqual(w.load_game()["leader"], "小明")
 
 

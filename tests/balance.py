@@ -21,12 +21,15 @@ import wasteland_trail as w
 
 # 会规划的玩家在据点遇到愿意加入的人时带不带上 (想测"一个人走完全程"就改成 False)
 RECRUIT = True
+# 坐木筏过急流时, 会规划的玩家选错水道的机会 (真人要在几秒内选, 难免手忙脚乱)
+RAPID_MISTAKES = 0.2
 
 
 def planner(game_box, screen, month):
     """会规划的玩家: 多买水 (夏天出发再多买一半), 每人一套冬衣, 留一支排辐剂备用, 到据点就补货、带上愿意加入的人,
     缺吃的就打猎, 有人生病或受伤就用药, 辐射严重了就打排辐剂, 酸雨和辐射风暴天躲在车里休息。
-    留着坐渡船的钱; 过河时水浅就开过去, 有渡船就坐渡船, 水只深一点就等两天看水退不退, 不然就浮过去"""
+    留着坐渡船的钱; 过河时水浅就开过去, 有渡船就坐渡船, 水只深一点就等两天看水退不退, 不然就浮过去。
+    到了达尔斯, 钱够就交过路费走巴洛路, 不够就坐木筏, 急流里每次都选对水道"""
     thirst = 1.5 if month >= 6 else 1   # 夏天天热, 水要多带
     plan = ["1", "A", "1", str(month)]   # 单位、名字、性别、出发月份
     menu_visits = [0]
@@ -43,7 +46,7 @@ def planner(game_box, screen, month):
             raise RuntimeError(f"电脑玩家卡住了, 最后一个问题: {prompt}")
         if "选哪一项" in prompt:                  # 主菜单: 第一次开新游戏, 玩完一局回来就退出
             menu_visits[0] += 1
-            return "1" if menu_visits[0] == 1 else "4"
+            return "1" if menu_visits[0] == 1 else "5"
         if "确定, 开始新游戏" in prompt:          # 有旧存档也开新游戏
             return "1"
         if plan:
@@ -52,7 +55,7 @@ def planner(game_box, screen, month):
         s, party = game["supplies"], game["party"]
         if prompt == "快打: ":                    # 打猎: 打出屏幕上的词
             return re.findall(r">>> (\w+) <<<", screen.getvalue())[-1]
-        if "要进去买东西" in prompt:              # 据点里把冬衣、排辐剂、燃料、水、食物补到够用 (人越多要得越多)
+        if "要进去买卖东西" in prompt:              # 据点里把冬衣、排辐剂、燃料、水、食物补到够用 (人越多要得越多)
             n = len(party)
             # 排辐剂: 手上留 1 支备用, 辐射已经比较高的人再每人 1 支
             anti_rad = 1 + sum(game["rads"].get(name, 0) >= 40 for name in party)
@@ -84,6 +87,12 @@ def planner(game_box, screen, month):
             if waited[place] <= 2 and depth <= round(w.wade_depth(game) + w.SOAK_DEPTH, 1):
                 return "3"
             return "2"
+        if "走哪条路" in prompt:                  # 达尔斯: 钱够交过路费就走巴洛路, 不够就坐木筏
+            return "2" if game["money"] >= w.BARLOW_TOLL else "1"
+        if "往哪边划" in prompt:                  # 急流: 看清楚哪边是水道 (可人手忙脚乱时也会选错, 按 20% 算)
+            lanes = re.findall(r"左边(礁石|水道)  中间(礁石|水道)  右边(礁石|水道)", screen.getvalue())[-1]
+            want = "礁石" if random.random() < RAPID_MISTAKES and "礁石" in lanes else "水道"
+            return str(lanes.index(want) + 1)
         if "你怎么办" in prompt:                  # 劫匪就开枪, 雷区就慢慢开过去
             return "2"
         if "不用了" in prompt:                    # 据点里愿意跟着走的人: 带上
@@ -154,9 +163,10 @@ def main(rounds):
     days = []
     games_by_month = Counter()     # 每个出发月份玩了几局
     arrived_by_month = Counter()   # 其中到达了几局
-    # 存档放到临时文件夹, 不碰玩家真正的存档
+    # 存档和最高分榜放到临时文件夹, 不碰玩家真正的存档和最高分
     with tempfile.TemporaryDirectory() as tmp, \
-            mock.patch.object(w, "SAVE_FILE", os.path.join(tmp, "savegame.json")):
+            mock.patch.object(w, "SAVE_FILE", os.path.join(tmp, "savegame.json")), \
+            mock.patch.object(w, "HIGH_SCORE_FILE", os.path.join(tmp, "highscores.json")):
         for seed in range(rounds):
             text = play_one(seed)
             endings[re.findall(r"【(.*?结局.*?)】", text)[-1]] += 1

@@ -10,7 +10,7 @@ let letters;   // 共用内存后面的部分: 玩家输入的字 (UTF-8)
 const sleeper = new Int32Array(new SharedArrayBuffer(4));   // 专门用来「停一会儿」的一小块内存
 
 self.onmessage = async (event) => {
-  const { inputMemory, savedGame } = event.data;
+  const { inputMemory, savedGame, savedScores } = event.data;
   control = new Int32Array(inputMemory, 0, 2);
   letters = new Uint8Array(inputMemory, 8);
 
@@ -30,6 +30,7 @@ self.onmessage = async (event) => {
   // Python 那边要用的两个小工具 (见 run_in_browser.py)
   self.sleepMs = (ms) => Atomics.wait(sleeper, 0, 0, ms);
   self.saveToPage = (text) => postMessage({ type: "save", text: text });
+  self.saveScoresToPage = (text) => postMessage({ type: "scores", text: text });
 
   postMessage({ type: "status", text: "正在载入游戏……" });
   const game = await (await fetch("../wasteland_trail.py", { cache: "no-cache" })).text();
@@ -37,6 +38,9 @@ self.onmessage = async (event) => {
   pyodide.FS.writeFile("/home/pyodide/wasteland_trail.py", game);
   if (savedGame) {
     pyodide.FS.writeFile("/home/pyodide/savegame.json", savedGame);
+  }
+  if (savedScores) {
+    pyodide.FS.writeFile("/home/pyodide/highscores.json", savedScores);
   }
 
   postMessage({ type: "status", text: "" });
