@@ -14,11 +14,46 @@ SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.j
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-TOTAL_DISTANCE = 1000   # 到安全城市的总路程(公里)
-START_MONEY = 700       # 一开始的钱
+# 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
+# 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
+DESTINATION = "俄勒冈城"
+TOTAL_DISTANCE = 3119   # 到俄勒冈城的总路程(公里)
+START_MONEY = 700       # 一开始的钱 (一个人出发, 一开始吃喝少)
 
-# 路上的据点: 路程 -> 名字
-OUTPOSTS = {250: "锈铁镇", 500: "水塔营地", 750: "旧机场据点"}
+# 距离单位(开局时玩家选): 名字 -> 1 公里等于多少这个单位。游戏里的路程一律按公里算, 只在显示时换算
+UNITS = {"公里": 1, "英里": 0.621371}
+
+# 路上的据点(可以买东西), 都是当年拓荒者补给的贸易站或军事堡垒: 离起点几公里 -> (名字, 介绍)
+OUTPOSTS = {
+    510: ("卡尼堡", "1848 年建的军事堡垒, 专门保护走俄勒冈小道的拓荒者。"),
+    999: ("拉勒米堡", "1834 年建的毛皮贸易站, 1849 年被军队买下, 是拓荒者路上最重要的补给站之一。"),
+    1633: ("布里杰堡", "山地向导吉姆·布里杰在 1840 年代初建的贸易站, 拓荒者在这里修车、换牲口。"),
+    1952: ("霍尔堡", "1834 年建的毛皮贸易站。再往前不远, 去加州的人和去俄勒冈的人就要分道扬镳了。"),
+    2400: ("博伊西堡", "1834 年建的毛皮贸易站, 就在蛇河边上。"),
+    2861: ("达尔斯", "哥伦比亚河边, 1850 年在这里建了军营。当年的拓荒者从这里要么顺着大河漂流而下, "
+                     "要么走绕过胡德山的巴洛路。"),
+}
+
+# 路上的风景地标(只看不买): 离起点几公里 -> (名字, 介绍)
+LANDMARKS = {
+    130: ("堪萨斯河渡口", "拓荒者遇到的第一条大河, 当年有人在这里摆渡, 过河要交钱。"),
+    280: ("大蓝河", "河边的凹泉是拓荒者喜欢的宿营地, 石头上还留着 1846 年刻下的名字。"),
+    808: ("灰洞", "因为长着白蜡树而得名。下来要经过陡峭的绞盘山, 当年得锁住车轮、用绳子拉着车慢慢往下放。"),
+    875: ("法院岩", "这块巨岩让拓荒者想起了家乡小镇上的法院大楼, 旁边小一点的那块叫监狱岩。"),
+    901: ("烟囱岩", "一根细长的石柱, 拓荒者提前好几天就能远远望见, 是他们日记里写得最多的地标。"),
+    941: ("斯科茨崖", "以一位 1828 年前后死在这附近的毛皮商人海勒姆·斯科特命名。"),
+    1202: ("北普拉特河渡口", "拓荒者在这里最后一次渡过北普拉特河, 1847 年有人在这里开了渡口。"),
+    1275: ("独立岩", "传说拓荒者要在 7 月 4 日独立日前赶到这里, 才不会在冬天前被困在山里。石头上刻满了几千个名字。"),
+    1283: ("魔鬼门", "甜水河从一道 100 多米高的石缝中间穿了过去。"),
+    1450: ("南山口", "翻越落基山脉最平缓的山口, 也是大陆分水岭: 过了这里, 河水都往太平洋流。路程差不多走了一半。"),
+    1548: ("格林河", "又宽又急的大河, 是整条小道上最危险的渡口之一。"),
+    1852: ("苏打泉", "地下冒出天然的气泡水, 拓荒者觉得尝起来像苏打水。"),
+    1981: ("美国瀑布", "蛇河上的一道大瀑布, 传说名字来自一群在这里翻了船的美国毛皮商人。"),
+    2176: ("鲑鱼瀑布", "当地的原住民在这里捕鲑鱼, 拓荒者常拿东西跟他们换鱼吃。"),
+    2213: ("蛇河渡口", "河中间有三个小岛, 拓荒者借着小岛一段一段地渡过蛇河。"),
+    2596: ("大圆谷", "被群山围起来的一大片圆形草地, 拓荒者在这里歇脚, 准备翻越蓝山。"),
+    2651: ("蓝山", "远远看去山是蓝色的。当年拓荒者要一路砍树开路, 车才能翻过去。"),
+}
 
 # 商店价格(每个多少钱)
 PRICES = {"食物": 1, "水": 1, "燃料": 4, "子弹": 1, "零件": 20, "药品": 15}
@@ -26,8 +61,11 @@ PRICES = {"食物": 1, "水": 1, "燃料": 4, "子弹": 1, "零件": 20, "药品
 # 口粮: 编号 -> (名字, 每人每天吃几份, 每天健康变化)
 RATIONS = {1: ("少", 1, -2), 2: ("普通", 2, 1), 3: ("饱", 3, 3)}
 
-# 速度: 编号 -> (名字, 每天走几公里, 每天用几份燃料, 每天健康变化)
-PACES = {1: ("慢", 25, 1, 1), 2: ("中", 40, 2, 0), 3: ("快", 55, 3, -3)}
+# 每开 100 公里, 遇到随机事件的机会
+EVENT_CHANCE_PER_100KM = 0.35
+
+# 速度: 编号 -> (名字, 车每天开几公里, 每天用几份燃料, 每天健康变化)
+PACES = {1: ("慢", 90, 1, 1), 2: ("中", 105, 2, 0), 3: ("快", 120, 3, -2)}
 
 # 天气: 名字 -> (出现的机会, 路程倍数, 每人多喝几份水, 在外面时每天健康变化, 说明)
 WEATHER = {
@@ -45,11 +83,25 @@ LOOT = {"食物": (10, 40), "水": (10, 30), "燃料": (3, 10),
 HUNT_WORDS = ["bang", "pow", "boom", "zap"]
 ANIMALS = {"变异野兔": (10, 25), "双头鹿": (30, 60), "辐射野猪": (50, 90)}
 
-# 队员的默认名字(不想自己起名字时, 从这里随机挑)
-DEFAULT_NAMES = ["阿强", "小美", "老周", "大雷", "眼镜", "胖虎", "小雨", "铁柱"]
+# 队伍最多几个人 (包括主角)
+MAX_PARTY = 4
+
+# 每个据点里有 1 个人愿意免费跟你走: 据点名字 -> (这个人的名字, 职业)
+RECRUITS = {"卡尼堡": ("杰克", "老兵"), "拉勒米堡": ("玛莎", "医生"), "布里杰堡": ("埃迪", "机械师"),
+            "霍尔堡": ("汉娜", "猎人"), "博伊西堡": ("本", "商人"), "达尔斯": ("罗莎", "拾荒者")}
+
+# 职业的特长: 只要这个人还活着、在队伍里, 特长就一直有用
+SKILLS = {
+    "老兵": "遇到劫匪开枪一定能打赢, 赶走野狗只要 5 发子弹",
+    "医生": "用药一次能恢复 60 点健康 (平时是 35)",
+    "机械师": "车坏了不用零件也能当场修好",
+    "猎人": "打猎得到的肉多一半",
+    "商人": "在据点买东西打八折",
+    "拾荒者": "搜刮废墟一定有收获, 一次能找到两样东西",
+}
 
 # 路上可能遇到的陌生人
-STRANGER_NAMES = ["老烟枪", "小石头", "铁姐", "独眼张", "阿飞"]
+STRANGER_NAMES = ["迈克", "安娜", "老乔", "凯特", "比尔"]
 
 
 # ========== 小工具 ==========
@@ -76,6 +128,29 @@ def health_word(h):
 def pick(game, male_word, female_word):
     """按主角的性别选一个称呼, 比如 pick(game, "大哥", "大姐")"""
     return male_word if game["gender"] == "男" else female_word
+
+
+def you(game):
+    """队伍里只有一个人时说"你", 有好几个人时说"你们" """
+    return "你" if len(game["party"]) == 1 else "你们"
+
+
+def everyone(game):
+    """队伍里只有一个人时说"你", 有好几个人时说"大家" """
+    return "你" if len(game["party"]) == 1 else "大家"
+
+
+def show_distance(game, km):
+    """按玩家选的单位显示路程, 比如选了英里时 show_distance(game, 40) 是 "25 英里" """
+    return f"{round(km * UNITS[game['unit']])} {game['unit']}"
+
+
+def skilled(game, job):
+    """队伍里活着的人里, 谁是这个职业。没有就返回 None"""
+    for name in game["party"]:
+        if game["jobs"].get(name) == job:
+            return name
+    return None
 
 
 def random_member(game):
@@ -134,40 +209,46 @@ def new_game():
         "visited": [],      # 已经到过的据点
         "seeds": False,     # 有没有找到种子库(隐藏结局)
         "gender": "男",     # 主角的性别
+        "unit": "公里",     # 显示路程用的单位
+        "leader": "",       # 主角的名字
+        "jobs": {},         # 队员名字 -> 职业 (主角和路上的陌生人没有职业)
     }
 
 
 def setup(game):
-    print("核战争已经过去二十年了。")
-    print(f"你要带着队伍开车穿过废土, 到 {TOTAL_DISTANCE} 公里外的安全城市。\n")
+    unit = ask_number("距离单位: 1. 公里  2. 英里  ", 1, 2)
+    game["unit"] = "公里" if unit == 1 else "英里"
+    print("\n核战争已经过去二十年了。")
+    print("你被赶出了密苏里州独立城地下的避难所。")
+    print(f"你要一个人开车, 沿着当年拓荒者走过的俄勒冈小道, "
+          f"去 {show_distance(game, TOTAL_DISTANCE)}外的{DESTINATION}。")
+    print("路上的据点里也许能遇到愿意跟你走的人。\n")
     leader = input("你叫什么名字? (直接按回车就叫\"队长\") ").strip() or "队长"
     gender = ask_number("你的性别: 1. 男  2. 女  ", 1, 2)
     game["gender"] = "男" if gender == 1 else "女"
-    names = [leader]
-    spare = [n for n in DEFAULT_NAMES if n != leader]
-    random.shuffle(spare)
-
-    print("\n你还有 3 个队员。")
-    use_default = ask_number("1. 自己给队员起名字  2. 用默认名字  ", 1, 2) == 2
-    for i in range(1, 4):
-        name = "" if use_default else input(f"第 {i} 个队员叫什么? (直接按回车用默认名字) ").strip()
-        name = name or spare.pop()
-        while name in names:
-            name += "2"
-        names.append(name)
-    print("你的队员: " + "、".join(names[1:]))
-    for name in names:
-        game["party"][name] = 100
+    game["leader"] = leader
+    game["party"][leader] = 100
 
     print("\n出发前可以在营地买东西。")
     print("提示: 每人每天要吃食物、喝 1 份水, 车每天要用燃料。子弹可以打猎, 也可以防身。")
     shop(game)
 
 
+def cost_of(game, item, amount):
+    """买 amount 个 item 要花多少钱。队伍里有商人就打八折, 有零头往上算 1 块"""
+    cost = amount * PRICES[item]
+    if skilled(game, "商人"):
+        cost = (cost * 8 + 9) // 10
+    return cost
+
+
 def shop(game):
     items = list(PRICES)
     while True:
         print(f"\n------ 商店 ------  你有 {game['money']} 块钱")
+        merchant = skilled(game, "商人")
+        if merchant:
+            print(f"商人{merchant}帮你讲价, 买什么都打八折。")
         for i, item in enumerate(items, 1):
             print(f"{i}. {item}  {PRICES[item]} 块一个  (现在有 {game['supplies'][item]})")
         print("0. 离开商店")
@@ -176,19 +257,29 @@ def shop(game):
             return
         item = items[choice - 1]
         most = game["money"] // PRICES[item]
+        while cost_of(game, item, most + 1) <= game["money"]:   # 打折以后能多买几个
+            most += 1
         amount = ask_number(f"买多少{item}? (最多 {most}) ", 0, most)
         game["supplies"][item] += amount
-        game["money"] -= amount * PRICES[item]
+        game["money"] -= cost_of(game, item, amount)
 
 
 def show_status(game):
     s = game["supplies"]
     left = TOTAL_DISTANCE - game["distance"]
-    print(f"\n==== 第 {game['day']} 天 | 已走 {game['distance']} 公里 | 还剩 {left} 公里 ====")
+    print(f"\n==== 第 {game['day']} 天 | 已走 {show_distance(game, game['distance'])}"
+          f" | 还剩 {show_distance(game, left)} ====")
     print(f"天气: {game['weather']} ({WEATHER[game['weather']][4]})")
     print("物资: " + "  ".join(f"{k} {v}" for k, v in s.items()) + f"  钱 {game['money']}")
-    print("队员: " + "  ".join(f"{n} {health_word(h)}({h})" for n, h in game["party"].items()))
+    people = []
+    for n, h in game["party"].items():
+        job = f"[{game['jobs'][n]}]" if n in game["jobs"] else ""
+        people.append(f"{n}{job} {health_word(h)}({h})")
+    print("队员: " + "  ".join(people))
     print(f"口粮: {RATIONS[game['ration']][0]}  速度: {PACES[game['pace']][0]}")
+    name, km = next_place(game)
+    shop_note = " (据点, 可以买东西)" if name in [n for n, _ in OUTPOSTS.values()] else ""
+    print(f"下一站: {name}{shop_note}, 还有 {show_distance(game, km - game['distance'])}")
     if game["seeds"]:
         print("车上带着: 种子库的种子")
 
@@ -213,7 +304,7 @@ def pass_day(game, health_bonus=0, indoors=False):
     else:
         change -= round(10 * (food_need - s["食物"]) / food_need)
         s["食物"] = 0
-        print("食物不够了, 大家在挨饿!")
+        print(f"食物不够了, {everyone(game)}在挨饿!")
 
     water_need = people * (1 + extra_water)
     if s["水"] >= water_need:
@@ -221,7 +312,7 @@ def pass_day(game, health_bonus=0, indoors=False):
     else:
         change -= round(15 * (water_need - s["水"]) / water_need)
         s["水"] = 0
-        print("干净的水不够了, 大家渴得受不了!")
+        print(f"干净的水不够了, {everyone(game)}渴得受不了!")
 
     game["day"] += 1
     change_all_health(game, change)
@@ -237,31 +328,36 @@ def travel(game):
     s["燃料"] -= fuel_need
     weather = game["weather"]
     speed = WEATHER[weather][1]
-    km = round((km + random.randint(-5, 5)) * speed)
+    km = round((km + random.randint(-10, 10)) * speed)
     km = min(km, TOTAL_DISTANCE - game["distance"])   # 最后一段路不多算
     game["distance"] += km
     if speed < 1:
-        print(f"\n{weather}里车开不快, 只往前开了 {km} 公里。")
+        print(f"\n{weather}里车开不快, 只往前开了 {show_distance(game, km)}。")
     else:
-        print(f"\n车往前开了 {km} 公里。")
+        print(f"\n车往前开了 {show_distance(game, km)}。")
     pass_day(game, pace_health)
-    random_event(game)
-    check_outposts(game)
+    random_event(game, km)
+    check_places(game)
 
 
 def rest(game):
-    print("\n大家躲在车里休息了一天。")
+    print(f"\n{everyone(game)}躲在车里休息了一天。")
     pass_day(game, 8, indoors=True)
 
 
 def scavenge(game):
-    print("\n你们花了一天搜刮附近的废墟……")
+    print(f"\n{you(game)}花了一天搜刮附近的废墟……")
     pass_day(game)
     if not game["party"]:
         return
     roll = random.random()
+    scavenger = skilled(game, "拾荒者")
     if roll < 0.2:
         mutant_attack(game)
+    elif scavenger:
+        print(f"拾荒者{scavenger}知道该往哪儿翻。")
+        for _ in range(2):
+            find_supplies(game)
     elif roll < 0.4:
         print("什么有用的都没找到。")
     else:
@@ -277,7 +373,7 @@ def hunt(game):
     s["子弹"] -= 5
     animal = random.choice(list(ANIMALS))
     word = random.choice(HUNT_WORDS)
-    print(f"\n你们拿着枪出去打猎, 远处有一只{animal}……")
+    print(f"\n{you(game)}拿着枪出去打猎, 远处有一只{animal}……")
     input("准备好了就按回车, 然后马上打出屏幕上的词, 再按回车!")
     print(f"\n    >>> {word} <<<\n")
     start = time.time()
@@ -286,6 +382,9 @@ def hunt(game):
 
     low, high = ANIMALS[animal]
     food = random.randint(low, high)
+    hunter = skilled(game, "猎人")
+    if hunter:
+        food = food * 3 // 2   # 猎人收拾猎物更干净, 肉多一半
     if typed != word:
         print("手一抖打歪了, 猎物跑掉了。")
     elif seconds <= 3:
@@ -297,6 +396,8 @@ def hunt(game):
         s["食物"] += food
     else:
         print(f"用了 {seconds:.1f} 秒, 太慢了, 猎物早就跑了。")
+    if hunter and typed == word and seconds <= 6:
+        print(f"(猎人{hunter}帮忙收拾猎物, 肉多了一半。)")
     pass_day(game)
 
 
@@ -307,11 +408,16 @@ def use_medicine(game):
         return
     name = min(game["party"], key=game["party"].get)   # 找健康最低的人
     if game["party"][name] >= 100:
-        print("\n大家都很健康, 不需要用药。")
+        print("\n现在没人受伤, 不需要用药。")
         return
     s["药品"] -= 1
-    game["party"][name] = min(100, game["party"][name] + 35)
-    print(f"\n你给 {name} 用了药, {name} 感觉好多了。")
+    doctor = skilled(game, "医生")
+    heal = 60 if doctor else 35
+    game["party"][name] = min(100, game["party"][name] + heal)
+    if doctor:
+        print(f"\n医生{doctor}给 {name} 用了药, {name} 好多了。")
+    else:
+        print(f"\n你给 {name} 用了药, {name} 感觉好多了。")
 
 
 def change_ration(game):
@@ -320,24 +426,79 @@ def change_ration(game):
 
 
 def change_pace(game):
-    print("\n速度: 1. 慢  2. 中  3. 快")
+    print("\n速度:")
+    for number, (name, km, fuel, health) in PACES.items():
+        if health > 0:
+            note = f", {everyone(game)}比较轻松"
+        elif health < 0:
+            note = f", 路上颠簸, {everyone(game)}会掉血"
+        else:
+            note = ""
+        print(f"{number}. {name}: 每天大约开 {show_distance(game, km)}, 用 {fuel} 份燃料{note}")
     game["pace"] = ask_number("选哪个? ", 1, 3)
 
 
-def check_outposts(game):
-    for km, name in OUTPOSTS.items():
-        if game["party"] and game["distance"] >= km and name not in game["visited"]:
-            game["visited"].append(name)
-            print(f"\n你们到了【{name}】, 这里有幸存者在做买卖。")
-            if ask_number("要进去买东西吗? 1. 要  2. 不要  ", 1, 2) == 1:
-                shop(game)
+def next_place(game):
+    """下一个要到的地方: 返回 (名字, 离起点几公里)"""
+    places = [(km, name) for km, (name, _) in LANDMARKS.items()]
+    places += [(km, name) for km, (name, _) in OUTPOSTS.items()]
+    places.append((TOTAL_DISTANCE, DESTINATION))
+    for km, name in sorted(places):
+        if km > game["distance"]:
+            return name, km
+    return DESTINATION, TOTAL_DISTANCE
+
+
+def reached(game, km, name):
+    """是不是第一次走到这个地方"""
+    if game["party"] and game["distance"] >= km and name not in game["visited"]:
+        game["visited"].append(name)
+        return True
+    return False
+
+
+def check_places(game):
+    """路过风景地标会介绍一下, 到了据点还可以进去买东西。
+    一天可能连着经过好几个地方, 所以把地标和据点放在一起, 按路程从近到远排好再一个个看"""
+    places = [(km, name, intro, False) for km, (name, intro) in LANDMARKS.items()]
+    places += [(km, name, intro, True) for km, (name, intro) in OUTPOSTS.items()]
+    for km, name, intro, can_shop in sorted(places):
+        if not reached(game, km, name):
+            continue
+        if not can_shop:
+            print(f"\n{you(game)}经过了【{name}】。{intro}")
+            continue
+        print(f"\n{you(game)}到了【{name}】。{intro}")
+        offer_recruit(game, name)
+        if ask_number("这里有幸存者在做买卖, 要进去买东西吗? 1. 要  2. 不要  ", 1, 2) == 1:
+            shop(game)
+
+
+def offer_recruit(game, place):
+    """据点里有个人愿意免费跟你走, 车上坐满了就带不了"""
+    if place not in RECRUITS:
+        return
+    name, job = RECRUITS[place]
+    if name in game["party"] or name in game["dead"]:
+        return
+    if len(game["party"]) >= MAX_PARTY:
+        print(f"这里有个叫 {name} 的{job}也想往西走, 可惜你们的车已经坐满了。")
+        return
+    print(f"这里有个叫 {name} 的{job}也想往西走, 愿意跟{you(game)}一起。")
+    print(f"特长: {SKILLS[job]}。但多一个人, 每天也要多吃多喝。")
+    if ask_number(f"1. 让{name}加入  2. 不用了  ", 1, 2) == 1:
+        game["party"][name] = 100
+        game["jobs"][name] = job
+        print(f"{name} 加入了队伍!")
+    else:
+        print(f"{name} 点点头, 留在了{place}。")
 
 
 # ========== 随机事件(想加新事件就照着写一个函数, 再放进 EVENTS) ==========
 
 def radiation_storm(game):
     days = random.randint(1, 2)
-    print(f"\n【辐射风暴】天空变成了绿色! 你们躲了 {days} 天, 大家都受到了辐射。")
+    print(f"\n【辐射风暴】天空变成了绿色! {you(game)}躲了 {days} 天, 还是受到了辐射。")
     for _ in range(days):
         pass_day(game, indoors=True)
     change_all_health(game, -10)
@@ -346,14 +507,17 @@ def radiation_storm(game):
 def raiders(game):
     s = game["supplies"]
     print("\n【劫匪】一伙劫匪拦住了路!")
-    print(f"「{pick(game, '小子', '丫头')}, 把东西交出来, 饶你们不死!」")
+    print(f"「{pick(game, '小子', '丫头')}, 把东西交出来, 饶{you(game)}不死!」")
     print("1. 交出一些物资  2. 开枪(要 15 发子弹)  3. 加速逃跑(要 3 份燃料)")
     choice = ask_number("你怎么办? ", 1, 3)
 
     if choice == 2 and s["子弹"] >= 15:
         s["子弹"] -= 15
-        if random.random() < 0.7:
-            print("你们打退了劫匪!")
+        veteran = skilled(game, "老兵")
+        if veteran:
+            print(f"老兵{veteran}几枪就把劫匪打跑了, 谁都没受伤。")
+        elif random.random() < 0.7:
+            print(f"{you(game)}打退了劫匪!")
         else:
             victim = random_member(game)
             print(f"劫匪被打跑了, 但是 {victim} 中枪受伤了。")
@@ -363,7 +527,7 @@ def raiders(game):
     if choice == 3 and s["燃料"] >= 3:
         s["燃料"] -= 3
         if random.random() < 0.6:
-            print("你们甩掉了劫匪!")
+            print(f"{you(game)}甩掉了劫匪!")
             return
         print("没跑掉……")
     elif choice != 1:
@@ -378,7 +542,10 @@ def raiders(game):
 def breakdown(game):
     s = game["supplies"]
     print("\n【车坏了】车子突然停下, 冒出一股黑烟!")
-    if s["零件"] > 0:
+    mechanic = skilled(game, "机械师")
+    if mechanic:
+        print(f"机械师{mechanic}钻到车底下鼓捣了一会儿, 没用零件就修好了。")
+    elif s["零件"] > 0:
         s["零件"] -= 1
         print("你用了 1 个备用零件, 很快就修好了。")
     else:
@@ -396,9 +563,14 @@ def warehouse(game):
 def mutant_attack(game):
     s = game["supplies"]
     print("\n【变异野兽】一群变异野狗冲了过来!")
-    if s["子弹"] >= 10:
-        s["子弹"] -= 10
-        print("你们开枪把它们赶走了, 用掉 10 发子弹。")
+    veteran = skilled(game, "老兵")
+    bullets = 5 if veteran else 10
+    if s["子弹"] >= bullets:
+        s["子弹"] -= bullets
+        if veteran:
+            print(f"老兵{veteran}枪法准, 只用 5 发子弹就把它们赶走了。")
+        else:
+            print(f"{you(game)}开枪把它们赶走了, 用掉 10 发子弹。")
     else:
         victim = random_member(game)
         print(f"子弹不够! {victim} 被咬伤了。")
@@ -436,8 +608,11 @@ def stranger(game):
     name = random.choice(STRANGER_NAMES)
     while name in game["party"] or name in game["dead"]:
         name += "2"
-    print(f"\n【陌生人】路边有个叫 {name} 的幸存者, 想跟你们一起走。")
+    print(f"\n【陌生人】路边有个叫 {name} 的幸存者, 想跟{you(game)}一起走。")
     print(f"「{pick(game, '大哥', '大姐')}, 带上我吧, 我什么活都能干!」")
+    if len(game["party"]) >= MAX_PARTY:
+        print(f"可惜车上已经坐满了, 只能让 {name} 自己走。")
+        return
     print("多一个人能多一份力气, 但每天也要多吃多喝。")
     if ask_number(f"1. 让{name}加入  2. 拒绝  ", 1, 2) == 2:
         print(f"{name} 失望地走开了。")
@@ -461,7 +636,7 @@ def minefield(game):
     if choice == 1 and s["燃料"] >= 2:
         s["燃料"] -= 2
         pass_day(game)
-        print("你们绕开了雷区, 平安无事。")
+        print(f"{you(game)}绕开了雷区, 平安无事。")
         return
     if choice == 1:
         print("燃料不够绕路, 只能硬着头皮开过去……")
@@ -470,7 +645,7 @@ def minefield(game):
         print(f"轰! 车轮压到了一颗地雷, {victim} 受了重伤。")
         hurt(game, victim, 40)
     else:
-        print("你们小心翼翼地开了过去, 什么都没炸。")
+        print(f"{you(game)}小心翼翼地开了过去, 什么都没炸。")
 
 
 def radio_signal(game):
@@ -484,8 +659,8 @@ def radio_signal(game):
     roll = random.random()
     if roll < 0.2 and not game["seeds"]:
         game["seeds"] = True
-        print("你们找到了一个旧世界的种子库! 里面封存着几千种植物的种子。")
-        print("这些种子也许能让废土重新变绿……一定要把它们带到安全城市!")
+        print(f"{you(game)}找到了一个旧世界的种子库! 里面封存着几千种植物的种子。")
+        print("这些种子也许能让废土重新变绿……一定要把它们带到俄勒冈城!")
     elif roll < 0.7:
         print("地堡里还剩下不少旧物资!")
         for _ in range(3):
@@ -500,25 +675,31 @@ EVENTS = [radiation_storm, raiders, breakdown, warehouse,
           stranger, minefield, radio_signal]
 
 
-def random_event(game):
-    """每走一天, 有 35% 的机会发生一个随机事件"""
-    if game["party"] and random.random() < 0.35:
+def random_event(game, km):
+    """路上发生随机事件的机会跟开了多远有关: 每开 100 公里, 大约有 35% 的机会。
+    这样开得慢不会因为在路上的天数多, 就遇到更多倒霉事"""
+    if game["party"] and random.random() < EVENT_CHANCE_PER_100KM * km / 100:
         random.choice(EVENTS)(game)
 
 
 # ========== 结局 ==========
 
 def arrive(game):
-    """到达安全城市, 根据路上的情况决定是哪个结局"""
-    print(f"\n你们到达了安全城市! 一共用了 {game['day'] - 1} 天。")
+    """到达俄勒冈城, 根据路上的情况决定是哪个结局"""
+    print(f"\n{you(game)}到达了{DESTINATION}! 一共用了 {game['day'] - 1} 天。")
     print(f"活下来的人: {'、'.join(game['party'])}")
     if game["dead"]:
         print(f"路上失去的人: {'、'.join(game['dead'])}")
+    if game["leader"] in game["dead"]:
+        print(f"{game['leader']} 没能走到这里, 是同伴们替{game['leader']}走完了这条路。")
 
     if game["seeds"]:
         print("\n【隐藏结局: 绿色的希望】")
         print("城里的科学家打开种子库, 激动得说不出话。")
         print("第二年春天, 城墙外第一次长出了麦子。废土开始变绿了。")
+    elif not game["dead"] and len(game["party"]) == 1:
+        print("\n【独行结局: 一个人走完全程】")
+        print("没有人陪你, 也没有人掉队。你一个人走完了整条俄勒冈小道。")
     elif not game["dead"]:
         print("\n【完美结局: 一个都不少】")
         print("所有人都平安到达。城门打开的那一刻, 大家抱在一起哭了。")
@@ -570,7 +751,7 @@ def main():
     print("========== 废土之旅 ==========")
     game = load_game()
     if game:
-        print(f"发现存档: 第 {game['day']} 天, 已经走了 {game['distance']} 公里。")
+        print(f"发现存档: 第 {game['day']} 天, 已经走了 {show_distance(game, game['distance'])}。")
         if ask_number("1. 继续上次的游戏  2. 开始新游戏  ", 1, 2) == 2:
             game = None
     if not game:

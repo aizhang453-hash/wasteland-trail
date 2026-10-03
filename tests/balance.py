@@ -19,11 +19,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wasteland_trail as w
 
 
+# 会规划的玩家在据点遇到愿意加入的人时带不带上 (想测"一个人走完全程"就改成 False)
+RECRUIT = True
+
+
 def planner(game_box, screen):
-    """会规划的玩家: 多买水, 缺吃的就打猎, 有人受伤就用药, 酸雨天休息"""
-    plan = ["A", "1", "2",   # 名字、性别、用默认队员名
-            "1", "150", "2", "140", "3", "60", "4", "60", "5", "1", "6", "2", "0"]   # 出发前买东西
-    shopping = []
+    """会规划的玩家: 多买水, 到据点就补货、带上愿意加入的人, 缺吃的就打猎, 有人受伤就用药, 酸雨天休息"""
+    plan = ["1", "A", "1",   # 单位、名字、性别
+            "1", "60", "2", "60", "3", "70", "4", "40", "6", "1", "0"]   # 出发前买东西 (一个人出发)
+    shopping = []   # 据点里要买的东西: (商店里的编号, 买多少)
+    buying = []
 
     def answer(prompt=""):
         if plan:
@@ -32,16 +37,24 @@ def planner(game_box, screen):
         s, party = game["supplies"], game["party"]
         if prompt == "> ":                       # 打猎: 打出屏幕上的词
             return re.findall(r">>> (\w+) <<<", screen.getvalue())[-1]
-        if "要进去买东西" in prompt:              # 据点里先买水, 再买食物
-            shopping[:] = ["2", "1", "0"]
-            return "1"
+        if "要进去买东西" in prompt:              # 据点里把燃料、水、食物补到够用 (人越多要得越多)
+            n = len(party)
+            shopping[:] = [(choice, want - s[item]) for choice, item, want
+                           in [("3", "燃料", 45), ("2", "水", 22 * n + 10), ("1", "食物", 28 * n + 10)]
+                           if s[item] < want]
+            return "1" if shopping else "2"
         if "买什么" in prompt:
-            return shopping.pop(0) if shopping else "0"
+            if shopping:
+                buying[:] = [shopping.pop(0)]
+                return buying[0][0]
+            return "0"
         if "买多少" in prompt:
             most = int(prompt.split("最多")[1].split(")")[0])
-            return str(min(most, game["money"] // 2 + 1))
+            return str(min(most, buying[0][1]))
         if "你怎么办" in prompt:                  # 劫匪就开枪, 雷区就慢慢开过去
             return "2"
+        if "不用了" in prompt:                    # 据点里愿意跟着走的人: 带上
+            return "1" if RECRUIT else "2"
         if "换  2" in prompt or "加入" in prompt or "要花 2 天" in prompt:
             return "2"
         if "你要做什么" in prompt:
@@ -51,7 +64,7 @@ def planner(game_box, screen):
                 return "4"
             if s["食物"] and s["水"] and (game["weather"] == "酸雨" or min(party.values()) < 35):
                 return "2"
-            if s["燃料"] < 2:
+            if s["燃料"] < w.PACES[game["pace"]][2]:   # 燃料不够今天开的, 就去搜刮
                 return "3"
             return "1"
         return "1"
