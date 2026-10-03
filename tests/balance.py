@@ -25,16 +25,25 @@ RECRUIT = True
 
 def planner(game_box, screen, month):
     """会规划的玩家: 多买水 (夏天出发再多买一半), 每人一套冬衣, 留一支排辐剂备用, 到据点就补货、带上愿意加入的人,
-    缺吃的就打猎, 有人受伤就用药, 辐射严重了就打排辐剂, 酸雨和辐射风暴天躲在车里休息"""
+    缺吃的就打猎, 有人生病或受伤就用药, 辐射严重了就打排辐剂, 酸雨和辐射风暴天躲在车里休息"""
     thirst = 1.5 if month >= 6 else 1   # 夏天天热, 水要多带
-    plan = ["1", "A", "1", str(month),   # 单位、名字、性别、出发月份
-            "1", "60", "2", str(round(60 * thirst)), "3", "70", "4", "40", "6", "1", "7", "1", "8", "1",
-            "0"]   # 出发前买东西 (一个人出发)
-    shopping = []   # 据点里要买的东西: (商店里的编号, 买多少)
+    plan = ["1", "A", "1", str(month)]   # 单位、名字、性别、出发月份
+    menu_visits = [0]
+    # 出发前要买的东西 (一个人出发), 按顺序买, 钱不够了后面的就少买
+    shopping = [("1", 60), ("2", round(60 * thirst)), ("3", 70), ("4", 40), ("6", 1), ("7", 1), ("8", 1)]
     buying = []
-    medicine = []   # 决定用药以后, 用哪一种: "1" 药品, "2" 排辐剂
+    medicine = []   # 决定用药以后: [用哪一种 ("1" 药品, "2" 排辐剂), 给谁]
+    count = [0]
 
     def answer(prompt=""):
+        count[0] += 1
+        if count[0] > 20000:   # 一局正常几百次就玩完了, 太多说明电脑玩家卡在哪里转圈
+            raise RuntimeError(f"电脑玩家卡住了, 最后一个问题: {prompt}")
+        if "选哪一项" in prompt:                  # 主菜单: 第一次开新游戏, 玩完一局回来就退出
+            menu_visits[0] += 1
+            return "1" if menu_visits[0] == 1 else "4"
+        if "确定, 开始新游戏" in prompt:          # 有旧存档也开新游戏
+            return "1"
         if plan:
             return plan.pop(0)
         game = game_box[0]
@@ -45,8 +54,9 @@ def planner(game_box, screen, month):
             n = len(party)
             # 排辐剂: 手上留 1 支备用, 辐射已经比较高的人再每人 1 支
             anti_rad = 1 + sum(game["rads"].get(name, 0) >= 40 for name in party)
+            medicine_want = 2 if n > 1 else 1
             shopping[:] = [(choice, want - s[item]) for choice, item, want
-                           in [("7", "冬衣", n), ("8", "排辐剂", anti_rad), ("3", "燃料", 45),
+                           in [("7", "冬衣", n), ("6", "药品", medicine_want), ("8", "排辐剂", anti_rad), ("3", "燃料", 45),
                                ("2", "水", round((22 * n + 10) * thirst)), ("1", "食物", 28 * n + 10)]
                            if s[item] < want]
             return "1" if shopping else "2"
@@ -65,13 +75,17 @@ def planner(game_box, screen, month):
         if "换  2" in prompt or "加入" in prompt or "要花 2 天" in prompt:
             return "2"
         if "用哪种药" in prompt:
-            return medicine.pop()
+            return medicine[0]
+        if "给谁用" in prompt:
+            return str(list(party).index(medicine[1]) + 1)
         if "你要做什么" in prompt:
-            if s["药品"] and min(party.values()) < 50:
-                medicine[:] = ["1"]
+            sick = [name for name in party if name in game["sick"]]
+            if s["药品"] and (sick or min(party.values()) < 50):   # 先治生病受伤的人里最虚弱的
+                medicine[:] = ["1", min(sick or party, key=party.get)]
                 return "5"
-            if s["排辐剂"] and max(game["rads"].get(name, 0) for name in party) >= 50:
-                medicine[:] = ["2"]
+            most_rads = max(party, key=lambda name: game["rads"].get(name, 0))
+            if s["排辐剂"] and game["rads"].get(most_rads, 0) >= 50:
+                medicine[:] = ["2", most_rads]
                 return "5"
             if s["食物"] < 40 and s["子弹"] >= 25:
                 return "4"

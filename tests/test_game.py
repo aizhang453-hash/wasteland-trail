@@ -10,6 +10,7 @@ import random
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from contextlib import redirect_stdout
 from unittest import mock
 
@@ -25,19 +26,23 @@ class StopGame(Exception):
 def random_player(rng):
     """一个乱按的玩家: 大部分时候随便选, 偶尔故意输错"""
     count = [0]
+    played = [False]   # 有没有真的开始玩
 
     def answer(prompt=""):
         count[0] += 1
         if count[0] > 3000:
             raise StopGame
+        if "选哪一项" in prompt:        # 主菜单: 还没玩过就大多开新游戏, 玩过一局回来就退出
+            return "4" if played[0] else rng.choice(["1", "1", "1", "2", "3"])
         if "买多少" in prompt:
             most = int(prompt.split("最多")[1].split(")")[0])
             return str(rng.randint(0, most // 3))
         if "买什么" in prompt:
-            return rng.choice(["0", "0", "1", "2", "3", "4", "5", "6"])
+            return rng.choice(["0", "0", "1", "2", "3", "4", "5", "6", "7", "8"])
         if "你要做什么" in prompt:      # 一半时候往前开, 这样才能走得远、遇到更多事
+            played[0] = True
             return rng.choice(["1", "1", "1", "1", "1", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
-        if "退出游戏" in prompt:        # 存档后大多数时候接着玩
+        if "继续玩" in prompt:          # 存档后大多数时候接着玩
             return "2" if rng.random() < 0.05 else "1"
         if rng.random() < 0.1:
             return rng.choice(["", "abc", "²", "99"])
@@ -54,6 +59,19 @@ def new_test_game():
     return game
 
 
+REAL_CAPACITY = w.CAR_CAPACITY
+
+
+def real_car():
+    """用真的车载重。一般的测试为了方便把车当成无限大 (见 setUp), 测重量和完整玩游戏的测试要用真的"""
+    return mock.patch.object(w, "CAR_CAPACITY", REAL_CAPACITY)
+
+
+def no_new_diseases():
+    """过一天时不让人突然病倒。要算准每个人剩多少健康的测试用它, 不然偶尔有人随机生病, 测试就时好时坏"""
+    return mock.patch.multiple(w, catch_diseases=lambda *args: None, DIRTY_WATER_CHANCE=0)
+
+
 class GameTest(unittest.TestCase):
     def setUp(self):
         # 测试时用整行读的方式输入数字 (测试替玩家"打字"时用的是假的 input)
@@ -66,13 +84,17 @@ class GameTest(unittest.TestCase):
         patcher = mock.patch.object(w, "SAVE_FILE", os.path.join(tmp.name, "savegame.json"))
         patcher.start()
         self.addCleanup(patcher.stop)
+        # 测试队伍的物资给得很足 (每样 100 个, 好几吨), 一般的测试就把车当成无限大
+        patcher = mock.patch.object(w, "CAR_CAPACITY", 10 ** 12)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_random_play_never_crashes(self):
         """乱玩 300 局, 不管怎么按都不能报错"""
         for seed in range(300):
             with self.subTest(seed=seed):
                 random.seed(seed)
-                with mock.patch("builtins.input", random_player(random.Random(seed))), \
+                with real_car(), mock.patch("builtins.input", random_player(random.Random(seed))), \
                         redirect_stdout(io.StringIO()):
                     try:
                         w.main()
@@ -83,9 +105,10 @@ class GameTest(unittest.TestCase):
         """会规划的玩家能走完全程, 路上的据点、事件都会遇到, 也不能报错"""
         from tests.balance import play_one
         arrived = 0
-        for seed in range(100):
-            with self.subTest(seed=seed):
-                arrived += "一共用了" in play_one(seed)
+        with real_car():
+            for seed in range(100):
+                with self.subTest(seed=seed):
+                    arrived += "一共用了" in play_one(seed)
         self.assertGreater(arrived, 50)
 
     def test_ask_number_rejects_bad_input(self):
@@ -122,7 +145,7 @@ class GameTest(unittest.TestCase):
         """食物不够时有多少吃多少, 缺得越多掉血越多"""
         game = new_test_game()
         game["supplies"]["食物"] = 5        # 4 个人普通口粮要 8 份, 缺 3 份
-        with redirect_stdout(io.StringIO()):
+        with no_new_diseases(), redirect_stdout(io.StringIO()):
             w.pass_day(game)
         self.assertEqual(game["supplies"]["食物"], 0)
         # 普通口粮 +1, 缺 3/8 的食物 -4, 满血 100 封顶后是 97
@@ -131,7 +154,7 @@ class GameTest(unittest.TestCase):
     def test_medicine_not_wasted_on_healthy_party(self):
         game = new_test_game()
         with redirect_stdout(io.StringIO()):
-            w.use_medicine(game)
+            w.use_medicine(game, "A")   # A 没病没伤
         self.assertEqual(game["supplies"]["药品"], 100)
 
     def test_last_stretch_only_counts_what_is_left(self):
@@ -264,7 +287,7 @@ class GameTest(unittest.TestCase):
         game = self.with_job("医生")
         game["party"]["A"] = 20
         with redirect_stdout(io.StringIO()):
-            w.use_medicine(game)
+            w.use_medicine(game, "A")
         self.assertEqual(game["party"]["A"], 80)
 
     def test_mechanic(self):
@@ -486,7 +509,7 @@ class GameTest(unittest.TestCase):
         game["supplies"]["冬衣"] = 1
         game["temperature"] = 5   # 寒冷
         screen = io.StringIO()
-        with redirect_stdout(screen):
+        with no_new_diseases(), redirect_stdout(screen):
             w.pass_day(game, indoors=True)
         self.assertEqual(game["party"], {"A": 51, "B": 48})   # 普通口粮 +1, 没冬衣 -3
         self.assertIn("B没有冬衣穿", screen.getvalue())
@@ -495,7 +518,7 @@ class GameTest(unittest.TestCase):
         game["party"] = {"A": 50, "B": 50}
         game["weather"] = "晴"      # 过了一天天气变了, 换回晴天, 只看冷的影响
         game["temperature"] = -5   # 严寒, 在外面
-        with redirect_stdout(io.StringIO()):
+        with no_new_diseases(), redirect_stdout(io.StringIO()):
             w.pass_day(game)
         self.assertEqual(game["party"], {"A": 50, "B": 42})   # 口粮 +1, 严寒在外面 -1, 没冬衣再 -8
 
@@ -503,7 +526,7 @@ class GameTest(unittest.TestCase):
         """酷热天每人多喝 2 份水, 在外面还会中暑"""
         game = new_test_game()
         game["temperature"] = 38
-        with redirect_stdout(io.StringIO()):
+        with no_new_diseases(), redirect_stdout(io.StringIO()):
             w.pass_day(game)
         self.assertEqual(game["supplies"]["水"], 100 - 4 * 3)
         self.assertEqual(list(game["party"].values()), [99, 99, 99, 99])   # 口粮 +1, 中暑 -2
@@ -551,7 +574,7 @@ class GameTest(unittest.TestCase):
         old["weather"] = "酷热"
         del old["supplies"]["冬衣"]
         del old["supplies"]["排辐剂"]
-        for key in ["start_month", "temperature", "warmth", "rads"]:
+        for key in ["start_month", "temperature", "warmth", "rads", "sick"]:
             del old[key]
         with open(w.SAVE_FILE, "w", encoding="utf-8") as f:
             json.dump(old, f, ensure_ascii=False)
@@ -580,7 +603,7 @@ class GameTest(unittest.TestCase):
         game = new_test_game()
         game["rads"] = {"A": 10, "B": 30, "C": 60, "D": 90}
         screen = io.StringIO()
-        with redirect_stdout(screen):
+        with no_new_diseases(), redirect_stdout(screen):
             w.pass_day(game, indoors=True)
         # 普通口粮 +1 (满血 100 封顶), 再按辐射: 轻度 -1, 严重 -3, 致命 -6
         self.assertEqual(game["party"], {"A": 100, "B": 99, "C": 97, "D": 94})
@@ -588,28 +611,47 @@ class GameTest(unittest.TestCase):
         self.assertIn("辐射在B、C、D的身体里作怪", screen.getvalue())
 
     def test_anti_rad(self):
-        """排辐剂给辐射最高的人用, 一支排掉 50 点; 没人受辐射时不浪费"""
+        """一支排辐剂排掉 50 点辐射; 身上没辐射的人用了不浪费"""
         game = new_test_game()
         with redirect_stdout(io.StringIO()):
-            w.use_anti_rad(game)
+            w.use_anti_rad(game, "A")
         self.assertEqual(game["supplies"]["排辐剂"], 100)
         game["rads"] = {"A": 30, "B": 70}
         with redirect_stdout(io.StringIO()):
-            w.use_anti_rad(game)
-            w.use_anti_rad(game)
+            w.use_anti_rad(game, "B")
+            w.use_anti_rad(game, "A")
         self.assertEqual(game["rads"], {"A": 0, "B": 20})
         self.assertEqual(game["supplies"]["排辐剂"], 98)
 
     def test_medicine_menu(self):
-        """主菜单的「用药」: 选 1 用药品治伤, 选 2 用排辐剂, 选 0 什么都不用"""
-        for answer, used in [("1", "药品"), ("2", "排辐剂"), ("0", None)]:
-            game = new_test_game()
-            game["party"]["A"] = 50
-            game["rads"] = {"B": 60}
-            with mock.patch("builtins.input", lambda p="", a=answer: a), redirect_stdout(io.StringIO()):
-                w.take_medicine(game)
-            for item in ["药品", "排辐剂"]:
-                self.assertEqual(game["supplies"][item], 99 if item == used else 100)
+        """每天的菜单里的「用药」: 先选哪种药, 再选给谁; 哪一步选 0 都是不用"""
+        for answers, used, who in [(["1", "1"], "药品", "A"), (["2", "2"], "排辐剂", "B"),
+                                   (["0"], None, None), (["1", "0"], None, None)]:
+            with self.subTest(answers=answers):
+                game = new_test_game()
+                game["party"]["A"] = 50
+                game["rads"] = {"B": 60}
+                keys = iter(answers)
+                with mock.patch("builtins.input", lambda p="": next(keys)), redirect_stdout(io.StringIO()):
+                    w.take_medicine(game)
+                for item in ["药品", "排辐剂"]:
+                    self.assertEqual(game["supplies"][item], 99 if item == used else 100)
+                if who == "A":
+                    self.assertEqual(game["party"]["A"], 85)
+                if who == "B":
+                    self.assertEqual(game["rads"]["B"], 10)
+
+    def test_solo_does_not_choose(self):
+        """只有一个人时用药不用选给谁"""
+        game = new_test_game()
+        game["party"] = {"小明": 50}
+        game["leader"] = "小明"
+        keys = iter(["1"])   # 只回答用哪种药
+        screen = io.StringIO()
+        with mock.patch("builtins.input", lambda p="": next(keys)), redirect_stdout(screen):
+            w.take_medicine(game)
+        self.assertEqual(game["party"], {"小明": 85})
+        self.assertIn("你给自己用了药", screen.getvalue())
 
     def test_radiation_sickness_event(self):
         """辐射病不直接掉血, 而是辐射一下子升高"""
@@ -641,6 +683,247 @@ class GameTest(unittest.TestCase):
         self.assertIn("辐射 60 严重, 每天掉 3 点健康", screen.getvalue())
         self.assertIn("排辐剂 100", screen.getvalue())
 
+    # ---------- 生病和受伤 ----------
+
+    def test_disease_lasts_days_then_heals(self):
+        """痢疾每天掉 3 点健康, 5 天后自己好"""
+        game = new_test_game()
+        screen = io.StringIO()
+        with no_new_diseases(), redirect_stdout(screen):
+            w.get_sick(game, "A", "痢疾")
+            self.assertEqual(game["sick"], {"A": ["痢疾", 5]})
+            for day in range(5):
+                game["weather"] = "晴"      # 每天都换回晴天、20 度, 只看生病的影响
+                game["temperature"] = 20
+                w.pass_day(game)
+                if day == 0:
+                    self.assertEqual(game["party"]["A"], 97)   # 口粮 +1 (满血封顶), 痢疾 -3
+                    self.assertEqual(game["sick"], {"A": ["痢疾", 4]})
+        self.assertEqual(game["sick"], {})
+        self.assertIn("A的痢疾好了", screen.getvalue())
+
+    def test_only_one_disease_at_a_time(self):
+        game = new_test_game()
+        with redirect_stdout(io.StringIO()):
+            w.get_sick(game, "A", "痢疾")
+            w.get_sick(game, "A", "霍乱")
+        self.assertEqual(game["sick"], {"A": ["痢疾", 5]})
+
+    def test_rest_and_doctor_heal_faster(self):
+        """躲在车里休养, 病好得快一倍; 有医生照顾 (医生自己生病不算), 每天再多好一天"""
+        for job, indoors, days_left in [(None, False, 7), (None, True, 6), ("医生", False, 6), ("医生", True, 5)]:
+            with self.subTest(job=job, indoors=indoors):
+                game = self.with_job(job) if job else new_test_game()
+                with no_new_diseases(), redirect_stdout(io.StringIO()):
+                    w.get_sick(game, "A", "伤寒")   # 8 天
+                    w.pass_day(game, indoors=indoors)
+                self.assertEqual(game["sick"]["A"][1], days_left)
+
+    def test_sick_alone_is_worse(self):
+        """一个人生病没人照顾, 每天多掉 2 点"""
+        for party, expected in [({"小明": 50}, 46), ({"小明": 50, "杰克": 50}, 48)]:
+            game = new_test_game()
+            game["party"] = dict(party)
+            with no_new_diseases(), redirect_stdout(io.StringIO()):
+                w.get_sick(game, "小明", "痢疾")
+                w.pass_day(game, indoors=True)
+            self.assertEqual(game["party"]["小明"], expected)   # 口粮 +1, 痢疾 -3, 一个人再 -2
+
+    def test_medicine_cures_disease(self):
+        game = new_test_game()
+        game["party"]["A"] = 40
+        with redirect_stdout(io.StringIO()):
+            w.get_sick(game, "A", "肺炎")
+            w.use_medicine(game, "A")
+        self.assertEqual(game["sick"], {})
+        self.assertEqual(game["party"]["A"], 75)
+        self.assertEqual(game["supplies"]["药品"], 99)
+        # 满血但是生病的人, 用药也有用 (治病)
+        with redirect_stdout(io.StringIO()):
+            w.get_sick(game, "B", "骨折")
+            w.use_medicine(game, "B")
+        self.assertEqual(game["sick"], {})
+        self.assertEqual(game["supplies"]["药品"], 98)
+
+    def test_died_of_dysentery(self):
+        """病死的人会写「死于痢疾」"""
+        game = new_test_game()
+        game["party"]["A"] = 2
+        screen = io.StringIO()
+        with no_new_diseases(), redirect_stdout(screen):
+            w.get_sick(game, "A", "痢疾")
+            w.pass_day(game)
+        self.assertIn("A 死于痢疾", screen.getvalue())
+        self.assertIn("A 死于痢疾", "\n".join(game["diary"]))
+        self.assertEqual(game["sick"], {})
+
+    def test_cholera_needs_more_water(self):
+        game = new_test_game()
+        with no_new_diseases(), redirect_stdout(io.StringIO()):
+            w.get_sick(game, "A", "霍乱")
+            w.pass_day(game)
+        self.assertEqual(game["supplies"]["水"], 100 - 4 - w.CHOLERA_WATER)
+
+    def test_dirty_water_makes_people_sick(self):
+        """没有干净的水, 只能喝脏水, 会得霍乱或痢疾"""
+        game = new_test_game()
+        game["supplies"]["水"] = 0
+        with mock.patch.multiple(w, catch_diseases=lambda *args: None, DIRTY_WATER_CHANCE=1), \
+                redirect_stdout(io.StringIO()):
+            w.pass_day(game)
+        self.assertEqual(set(game["sick"]), {"A", "B", "C", "D"})
+        for disease, _ in game["sick"].values():
+            self.assertIn(disease, ["霍乱", "痢疾"])
+
+    def test_what_makes_people_sick(self):
+        """健康满分、什么事都没有的人很少生病; 受冻的人更容易病, 而且多半是肺炎"""
+        def sick_count(cold):
+            diseases = Counter()
+            random.seed(1)
+            for _ in range(3000):
+                game = new_test_game()
+                with redirect_stdout(io.StringIO()):
+                    w.catch_diseases(game, False, ["A"] if cold else [], False)
+                if "A" in game["sick"]:
+                    diseases[game["sick"]["A"][0]] += 1
+            return diseases
+        normal = sick_count(cold=False)
+        cold = sick_count(cold=True)
+        self.assertAlmostEqual(sum(normal.values()) / 3000, w.SICK_CHANCE, delta=0.006)
+        self.assertGreater(sum(cold.values()), sum(normal.values()) * 2)
+        self.assertEqual(cold.most_common(1)[0][0], "肺炎")
+        self.assertNotIn("肺炎", normal)
+
+    def test_injuries_from_events(self):
+        """踩雷会骨折; 被野狗咬、中枪可能伤口感染"""
+        game = new_test_game()
+        with mock.patch.object(w.random, "random", lambda: 0), \
+                mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()):
+            w.minefield(game)   # 慢慢开过去, 一定压到地雷
+        self.assertEqual([d for d, _ in game["sick"].values()], ["骨折"])
+        game = new_test_game()
+        game["supplies"]["子弹"] = 0
+        with mock.patch.object(w.random, "random", lambda: 0), redirect_stdout(io.StringIO()):
+            w.mutant_attack(game)   # 没子弹, 一定被咬
+        self.assertEqual([d for d, _ in game["sick"].values()], ["伤口感染"])
+
+    def test_sickness_shown(self):
+        """状态栏和查看队伍都能看到谁病了"""
+        game = new_test_game()
+        with redirect_stdout(io.StringIO()):
+            w.get_sick(game, "B", "痢疾")
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.show_status(game)
+            w.show_party(game)
+        self.assertIn("B 良好(100) 痢疾", screen.getvalue())
+        self.assertIn("痢疾: 拉肚子拉得站不起来, 每天掉 3 点健康, 大约还要 5 天才好", screen.getvalue())
+
+    # ---------- 重量 ----------
+
+    def test_show_weight(self):
+        """选公里用公斤, 选英里用磅; 很轻的东西留两位小数"""
+        game = w.new_game()
+        self.assertEqual(w.show_weight(game, 8000), "8 公斤")
+        self.assertEqual(w.show_weight(game, 500), "0.5 公斤")
+        self.assertEqual(w.show_weight(game, 20), "0.02 公斤")
+        self.assertEqual(w.show_weight(game, 1000000), "1000 公斤")
+        game["unit"] = "英里"
+        self.assertEqual(w.show_weight(game, 1000000), "2205 磅")
+        self.assertEqual(w.show_weight(game, 2000), "4.41 磅")
+
+    def test_load_counts_people_and_supplies(self):
+        game = w.new_game()
+        game["party"] = {"A": 100, "B": 100}
+        game["supplies"]["燃料"] = 10   # 80 公斤
+        game["supplies"]["子弹"] = 50   # 1 公斤
+        self.assertEqual(w.load_of(game), 2 * 70000 + 80000 + 1000)
+
+    def test_shop_counts_room(self):
+        """商店里最多能买几个, 要看钱, 也要看车上还装得下几个"""
+        game = w.new_game()
+        game["party"] = {"A": 100}
+        game["money"] = 1000
+        game["supplies"]["燃料"] = 100   # 800 公斤, 加上人一共 870, 还能装 130 公斤 = 16 份燃料
+        prompts = []
+        answers = iter(["3", "16", "0"])
+
+        def answer(prompt=""):
+            prompts.append(prompt)
+            return next(answers)
+        with real_car(), mock.patch("builtins.input", answer), redirect_stdout(io.StringIO()):
+            w.shop(game)
+        self.assertIn("买多少燃料? (最多 16) ", prompts)
+        self.assertEqual(game["supplies"]["燃料"], 116)
+
+    def test_loot_left_behind_when_full(self):
+        game = w.new_game()
+        game["party"] = {"A": 100}
+        game["supplies"]["燃料"] = 116   # 928 + 70 = 998 公斤, 只剩 2 公斤
+        screen = io.StringIO()
+        with real_car(), mock.patch.dict(w.LOOT, {"水": (10, 10)}, clear=True), redirect_stdout(screen):
+            w.find_supplies(game)
+        self.assertEqual(game["supplies"]["水"], 1)   # 2 公斤只装得下 1 份水
+        self.assertIn("有 9 份水只能丢下", screen.getvalue())
+
+    def test_hunting_carry_limit(self):
+        """打到 100 份肉: 一个人只扛得动 40 份 (20 公斤), 4 个人能扛 160 份, 就能全带回来"""
+        for party, brought in [({"A": 100}, 40), ({"A": 100, "B": 100, "C": 100, "D": 100}, 100)]:
+            game = w.new_game()
+            game["party"] = dict(party)
+            game["supplies"]["子弹"] = 5
+            with real_car(), no_new_diseases(), mock.patch.object(w, "HUNT_WORDS", ["bang"]), \
+                    mock.patch.object(w, "ANIMALS", {"测试猪": (100, 100)}), \
+                    mock.patch.object(w.time, "time", side_effect=[0, 1.0]), \
+                    mock.patch("builtins.input", lambda p="": "bang"), redirect_stdout(io.StringIO()):
+                w.hunt(game)
+            eaten = 2 * len(party)   # 打猎花了一天, 每人吃 2 份
+            self.assertEqual(game["supplies"]["食物"], brought - eaten)
+
+    def test_no_seat_when_too_heavy(self):
+        """车上东西太重, 据点里的人坐不上来"""
+        game = w.new_game()
+        game["party"] = {"小明": 100}
+        game["supplies"]["燃料"] = 115   # 920 + 70 = 990 公斤, 再坐一个人就超载
+        screen = io.StringIO()
+        with real_car(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(screen):
+            w.offer_recruit(game, "卡尼堡")
+        self.assertEqual(list(game["party"]), ["小明"])
+        self.assertIn("超载", screen.getvalue())
+
+    def test_recruit_brings_only_what_fits(self):
+        game = w.new_game()
+        game["party"] = {"小明": 100}
+        game["supplies"]["燃料"] = 100   # 800 + 70 = 870, 杰克坐上来 940, 还剩 60 公斤
+        with real_car(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(io.StringIO()):
+            w.offer_recruit(game, "卡尼堡")
+        self.assertIn("杰克", game["party"])
+        self.assertEqual(game["supplies"]["食物"], 60)   # 30 公斤, 装得下
+        self.assertEqual(game["supplies"]["水"], 15)     # 只剩 30 公斤, 只装得下 15 份水
+
+    def test_trader_needs_room(self):
+        game = w.new_game()
+        game["party"] = {"A": 100}
+        game["supplies"]["食物"] = 20
+        game["supplies"]["燃料"] = 110   # 70 + 10 + 880 = 960 公斤, 换掉食物也装不下 64 公斤燃料
+        screen = io.StringIO()
+        with real_car(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(screen):
+            w.trader(game)
+        self.assertIn("装不下 8 份燃料", screen.getvalue())
+        self.assertEqual(game["supplies"]["燃料"], 110)
+
+    def test_status_shows_load(self):
+        game = w.new_game()
+        game["party"] = {"A": 100}
+        game["supplies"]["燃料"] = 10
+        screen = io.StringIO()
+        with real_car(), redirect_stdout(screen):
+            w.show_status(game)
+            w.show_party(game)
+        self.assertIn("载重: 150 公斤 / 1000 公斤", screen.getvalue())
+        self.assertIn("人 70 公斤  物资 80 公斤", screen.getvalue())
+        self.assertIn("最重的是燃料", screen.getvalue())
+
     def test_save_and_load(self):
         game = new_test_game()
         game["day"] = 12
@@ -664,10 +947,94 @@ class GameTest(unittest.TestCase):
         game["supplies"]["水"] = 0
         with redirect_stdout(io.StringIO()):
             w.save_game(game)
-        answers = iter(["1", "2"])   # 继续上次的游戏, 然后休息一天
+        # 主菜单选继续游戏, 休息一天 (饿死了), 按回车回到主菜单, 退出
+        answers = iter(["2", "2", "", "4"])
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.main()
         self.assertFalse(os.path.exists(w.SAVE_FILE))
+
+    # ---------- 过场动画 ----------
+
+    def test_scene_frames(self):
+        """每一帧行数一样、每行一样宽 (窄终端也放得下), 车一直在; 背景会动, 开得越快动得越多"""
+        frames = [w.road_scene(frame, 2) for frame in range(w.ANIMATION_FRAMES)]
+        for rows in frames:
+            self.assertEqual(len(rows), len(frames[0]))
+            self.assertEqual({len(row) for row in rows}, {w.SCENE_WIDTH})
+            self.assertLess(w.SCENE_WIDTH, 80)
+            self.assertIn("(@)", "\n".join(rows))
+        self.assertNotEqual(frames[0], frames[1])
+        self.assertNotEqual(w.road_scene(5, 1), w.road_scene(5, 3))
+
+    def test_animation_plays_in_terminal(self):
+        """在真正的终端里: 一帧一帧画, 每次把光标移回画面顶上盖掉上一帧; 先藏光标, 最后显示回来"""
+        screen = io.StringIO()
+        with mock.patch.object(w, "can_read_keys", lambda: True), \
+                mock.patch.object(w, "enable_ansi", lambda: None), \
+                mock.patch.object(w.time, "sleep", lambda seconds: None), redirect_stdout(screen):
+            w.drive_animation(w.new_game())
+        text = screen.getvalue()
+        height = len(w.road_scene(0, 2))
+        self.assertEqual(text.count(f"\x1b[{height}A"), w.ANIMATION_FRAMES - 1)
+        self.assertTrue(text.startswith("\x1b[?25l"))
+        self.assertTrue(text.endswith("\x1b[?25h"))
+
+    def test_no_animation_when_not_in_terminal_or_turned_off(self):
+        """跑测试 (不是真正的终端) 时赶路不播动画; 设置里关掉了, 在终端里也不播"""
+        game = new_test_game()
+        screen = io.StringIO()
+        with mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(screen):
+            w.travel(game)
+        self.assertNotIn("\x1b", screen.getvalue())
+        self.assertGreater(game["distance"], 0)
+        # 这里只测动画本身: 假装在终端里的时候要是去赶路, 路上的事件会去读真的键盘, 测试就卡住了
+        screen = io.StringIO()
+        with mock.patch.object(w, "can_read_keys", lambda: True), mock.patch.object(w, "ANIMATION", False), \
+                redirect_stdout(screen):
+            w.drive_animation(game)
+        self.assertEqual(screen.getvalue(), "")
+
+    # ---------- 开始界面和主菜单 ----------
+
+    def run_main(self, answers):
+        """按顺序回答问题, 跑一遍 main(), 返回屏幕上的字"""
+        keys = iter(answers)
+        screen = io.StringIO()
+        with mock.patch("builtins.input", lambda p="": next(keys)), redirect_stdout(screen):
+            w.main()
+        return screen.getvalue()
+
+    def test_title_screen_help_and_quit(self):
+        text = self.run_main(["3", "", "4"])   # 游戏说明, 按回车回来, 退出
+        for words in ["废  土  之  旅", "W A S T E L A N D", w.VERSION, "1. 开始新游戏",
+                      "2. 继续游戏 (没有存档)", "游戏说明", "排辐剂", "下次再见"]:
+            self.assertIn(words, text)
+
+    def test_continue_without_save(self):
+        text = self.run_main(["2", "", "4"])
+        self.assertIn("还没有存档", text)
+
+    def test_save_then_back_to_menu_then_continue(self):
+        """开新游戏, 存档后回到主菜单, 主菜单上能看到存档, 选继续游戏能接着玩"""
+        new_game = ["1", "1", "小明", "1", "5", "0"]   # 新游戏: 公里、名字、男、5 月、不买东西
+        text = self.run_main(new_game + ["10", "2", "4"])   # 存档, 回到主菜单, 退出
+        self.assertTrue(os.path.exists(w.SAVE_FILE))
+        self.assertIn("继续游戏 (5月1日, 已走 0 公里)", text)
+        text = self.run_main(["2", "10", "2", "4"])   # 继续游戏, 马上又存档, 回到主菜单, 退出
+        self.assertIn("==== 5月1日 (第 1 天)", text)
+
+    def test_new_game_over_old_save_asks_first(self):
+        """已经有存档时开新游戏, 要先确认; 选回到主菜单, 存档还在"""
+        game = new_test_game()
+        game["leader"] = "老存档"
+        with redirect_stdout(io.StringIO()):
+            w.save_game(game)
+        text = self.run_main(["1", "2", "4"])   # 开始新游戏, 不确定, 退出
+        self.assertIn("开始新游戏会把它删掉", text)
+        self.assertEqual(w.load_game()["leader"], "老存档")
+        new_game = ["1", "1", "1", "小明", "1", "5", "0"]   # 开始新游戏、确定、公里、名字、男、5 月、不买东西
+        self.run_main(new_game + ["10", "2", "4"])
+        self.assertEqual(w.load_game()["leader"], "小明")
 
 
 if __name__ == "__main__":

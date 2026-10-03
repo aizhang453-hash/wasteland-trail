@@ -4,6 +4,7 @@
 运行方法: 在终端里输入 python wasteland_trail.py
 """
 
+import ctypes
 import json
 import os
 import random
@@ -26,11 +27,13 @@ SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.j
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
+VERSION = "v2.0"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
 DESTINATION = "俄勒冈城"
 TOTAL_DISTANCE = 3119   # 到俄勒冈城的总路程(公里)
-START_MONEY = 700       # 一开始的钱 (一个人出发, 一开始吃喝少)
+START_MONEY = 500       # 一开始的钱 (一个人出发, 一开始吃喝少; 队友加入时会自带口粮)
 
 # 距离单位(开局时玩家选): 名字 -> 1 公里等于多少这个单位。游戏里的路程一律按公里算, 只在显示时换算
 UNITS = {"公里": 1, "英里": 0.621371}
@@ -69,6 +72,29 @@ LANDMARKS = {
 
 # 商店价格(每个多少钱)
 PRICES = {"食物": 1, "水": 1, "燃料": 4, "子弹": 1, "零件": 20, "药品": 15, "冬衣": 10, "排辐剂": 20}
+# 每种物资怎么数 (5 份食物、30 发子弹、1 套冬衣……)
+MEASURES = {"食物": "份", "水": "份", "燃料": "份", "子弹": "发", "零件": "个", "药品": "份", "冬衣": "套", "排辐剂": "支"}
+
+# ---------- 重量 ----------
+
+# 重量一律按克算 (整数不会有小数算不准的问题), 显示的时候再换成公斤或磅。
+# 车最多能装多重: 人和东西加起来 1000 公斤, 差不多是一辆皮卡的载重。装不下的东西就拿不了
+CAR_CAPACITY = 1000000
+PERSON_WEIGHT = 70000       # 每个人 70 公斤 (人越多, 车上能装的东西越少)
+# 每种物资一个多重 (克), 尽量按现实来
+WEIGHTS = {
+    "食物": 500,      # 一顿饭的干粮, 半公斤
+    "水": 2000,       # 2 升水
+    "燃料": 8000,     # 10 升汽油连桶, 够车开 50 公里左右
+    "子弹": 20,       # 一发步枪子弹
+    "零件": 10000,
+    "药品": 200,
+    "冬衣": 2000,
+    "排辐剂": 200,
+}
+CARRY_PER_PERSON = 20000    # 打猎时每个人能扛多少肉回车上 (20 公斤), 人多扛得多
+# 重量单位跟着距离单位走: 距离单位 -> (重量单位, 1 公斤等于多少这个单位)
+WEIGHT_UNITS = {"公里": ("公斤", 1), "英里": ("磅", 2.20462)}
 
 # 口粮: 编号 -> (名字, 每人每天吃几份, 每天健康变化)
 RATIONS = {1: ("少", 1, -2), 2: ("普通", 2, 1), 3: ("饱", 3, 3)}
@@ -168,6 +194,37 @@ RADIATION_LEVELS = [
 ANTI_RAD = 50          # 一支排辐剂能排掉多少辐射
 SICKNESS_RADS = 40     # 「辐射病」事件一下子增加多少辐射
 
+# ---------- 生病和受伤 ----------
+
+# 这些老病现在都能治, 可核战争以后没有了干净的水、疫苗和医院, 它们又回来了。用药品能马上治好。
+# 病和伤: 名字 -> (每天健康变化, 一般要几天才好, 得病时怎么说, 症状)
+DISEASES = {
+    "痢疾":     (-3, 5, "得了痢疾", "拉肚子拉得站不起来"),
+    "霍乱":     (-6, 4, "得了霍乱", "上吐下泻, 每天要多喝 2 份水"),
+    "伤寒":     (-3, 8, "得了伤寒", "一直发高烧"),
+    "肺炎":     (-4, 6, "得了肺炎", "咳嗽、喘不上气"),
+    "伤口感染": (-3, 6, "的伤口感染了", "伤口红肿化脓"),
+    "骨折":     (-1, 12, "骨折了", "腿断了, 只能躺在车上"),
+    "破伤风":   (-5, 5, "得了破伤风", "浑身抽筋"),
+    "过度劳累": (-2, 3, "累倒了", "累得抬不起头"),
+}
+CHOLERA_WATER = 2     # 得了霍乱的人每天多喝几份水
+
+SICK_CHANCE = 0.01                # 健康满分的人, 每天生病的机会
+SICK_CHANCE_PER_HEALTH = 0.0005   # 健康每少 1 点, 生病的机会多这么多 (健康 40 的人: 1% + 3% = 4%)
+COMMON_DISEASES = ["痢疾", "伤寒"]   # 平常最容易得的病
+# 这些情况会让人更容易生病, 而且容易得某种病: 情况 -> (多出来的机会, 容易得的病)
+SICK_CAUSES = {
+    "挨饿":   (0.02, "痢疾"),       # 食物不够, 或者口粮选了"少"
+    "受冻":   (0.03, "肺炎"),       # 天冷没冬衣穿
+    "开太快": (0.03, "过度劳累"),   # 用"快"的速度赶路
+    "辐射高": (0.02, None),         # 辐射让人抵抗力变差, 什么病都容易得
+}
+DIRTY_WATER_CHANCE = 0.15   # 没有干净的水、只能喝脏水的日子, 每个人得霍乱或痢疾的机会
+INFECTION_CHANCE = 0.5      # 被咬伤、中枪以后伤口感染的机会
+TETANUS_CHANCE = 0.08       # 搜刮废墟时被生锈的铁皮划伤、得破伤风的机会
+SOLO_SICK_DAMAGE = 2        # 一个人生病没人照顾 (烧水做饭开车都得自己来), 每天多掉的健康
+
 # 搜刮时可能找到的东西: 名字 -> (最少, 最多)
 LOOT = {"食物": (10, 40), "水": (10, 30), "燃料": (3, 10),
         "子弹": (10, 30), "零件": (1, 1), "药品": (1, 2), "冬衣": (1, 2), "排辐剂": (1, 1)}
@@ -176,6 +233,11 @@ LOOT = {"食物": (10, 40), "水": (10, 30), "燃料": (3, 10),
 HUNT_WORDS = ["bang", "pow", "boom", "zap"]
 ANIMALS = {"变异野兔": (10, 25), "双头鹿": (30, 60), "辐射野猪": (50, 90)}
 
+# 过场动画: 每次赶路时播放一小段车在废土上开的画面 (只在真正的终端里播, 跑测试时不播)
+ANIMATION = True          # 不想看就改成 False
+ANIMATION_FRAMES = 24     # 一共几帧
+ANIMATION_DELAY = 0.06    # 每帧停几秒 (24 帧大约 1.5 秒)
+
 # 队伍最多几个人 (包括主角)
 MAX_PARTY = 4
 
@@ -183,10 +245,13 @@ MAX_PARTY = 4
 RECRUITS = {"卡尼堡": ("杰克", "老兵"), "拉勒米堡": ("玛莎", "医生"), "布里杰堡": ("埃迪", "机械师"),
             "霍尔堡": ("汉娜", "猎人"), "博伊西堡": ("本", "商人"), "达尔斯": ("罗莎", "拾荒者")}
 
+# 据点里的人加入时自带的口粮
+RECRUIT_BRINGS = {"食物": 60, "水": 40}
+
 # 职业的特长: 只要这个人还活着、在队伍里, 特长就一直有用
 SKILLS = {
     "老兵": "遇到劫匪开枪一定能打赢, 赶走野狗只要 5 发子弹",
-    "医生": "用药一次能恢复 60 点健康 (平时是 35)",
+    "医生": "用药一次能恢复 60 点健康 (平时是 35); 有医生照顾, 别人生病受伤好得更快",
     "机械师": "车坏了不用零件也能当场修好",
     "猎人": "打猎得到的肉多一半",
     "商人": "在据点买东西打八折",
@@ -310,6 +375,40 @@ def show_distance(game, km):
     return f"{round(km * UNITS[game['unit']])} {game['unit']}"
 
 
+def show_weight(game, grams):
+    """按玩家选的单位显示重量: 选了公里就用公斤, 选了英里就用磅。比如 show_weight(game, 8000) 是 "8 公斤" """
+    name, per_kg = WEIGHT_UNITS[game["unit"]]
+    value = grams / 1000 * per_kg
+    if value >= 10:
+        return f"{round(value)} {name}"
+    return f"{round(value, 2):g} {name}"   # 很轻的东西留两位小数, 比如子弹 0.02 公斤
+
+
+def load_of(game):
+    """车上现在有多重 (克): 人加上所有物资"""
+    stuff = sum(game["supplies"][item] * WEIGHTS[item] for item in WEIGHTS)
+    return len(game["party"]) * PERSON_WEIGHT + stuff
+
+
+def room_for(game, item):
+    """车上还能再装几个这种物资"""
+    return max(0, (CAR_CAPACITY - load_of(game)) // WEIGHTS[item])
+
+
+def has_seat_for_one_more(game):
+    """车上还坐不坐得下一个人 (车太重了就坐不下)"""
+    return CAR_CAPACITY - load_of(game) >= PERSON_WEIGHT
+
+
+def add_supplies(game, item, amount):
+    """往车上装东西, 装不下的只能丢下。返回真正装上车的数量"""
+    fits = min(amount, room_for(game, item))
+    game["supplies"][item] += fits
+    if fits < amount:
+        print(f"车上装不下了, 有 {amount - fits} {MEASURES[item]}{item}只能丢下。")
+    return fits
+
+
 def show_temperature(game, celsius):
     """显示气温: 选了公里就用摄氏度, 选了英里就用华氏度 (美国人习惯用的)"""
     if game["unit"] == "英里":
@@ -367,9 +466,14 @@ def check_deaths(game):
         if game["party"][name] <= 0:
             del game["party"][name]
             game["rads"].pop(name, None)
+            sick = game["sick"].pop(name, None)
             game["dead"].append(name)
-            print(f"!!! {name} 没能撑下去, 去世了。")
-            write_diary(game, f"{name} 去世了。")
+            if sick:
+                print(f"!!! {name} 死于{sick[0]}。")
+                write_diary(game, f"{name} 死于{sick[0]}。")
+            else:
+                print(f"!!! {name} 没能撑下去, 去世了。")
+                write_diary(game, f"{name} 去世了。")
 
 
 def hurt(game, name, amount):
@@ -386,14 +490,16 @@ def change_all_health(game, amount):
 
 
 def freeze(game, cold_health):
-    """天冷时, 冬衣不够每人一套的话, 没穿上的人会冻伤。冬衣按队伍里的顺序分, 主角先穿"""
+    """天冷时, 冬衣不够每人一套的话, 没穿上的人会冻伤。冬衣按队伍里的顺序分, 主角先穿。
+    返回冻着的人 (他们也更容易得肺炎)"""
     cold = list(game["party"])[game["supplies"]["冬衣"]:]
     if cold_health == 0 or not cold:
-        return
+        return []
     who = "你" if len(game["party"]) == 1 else "、".join(cold)
     print(f"天太冷了, {who}没有冬衣穿, 冻伤了!")
     for name in cold:
         hurt(game, name, -cold_health)
+    return cold
 
 
 def radiation_level(rads):
@@ -420,12 +526,70 @@ def radiation_damage(game):
         hurt(game, name, -radiation_level(game["rads"].get(name, 0))[2])
 
 
+def get_sick(game, name, disease):
+    """让一个人得病或受伤。每人同时只会有一种病或伤, 已经病了的人不会再得新的"""
+    if name not in game["party"] or name in game["sick"]:
+        return
+    _, days, saying, symptom = DISEASES[disease]
+    game["sick"][name] = [disease, days]
+    print(f"【{disease}】{name}{saying}! {symptom}。")
+    if len(game["party"]) == 1:
+        print("一个人生病, 没人照顾, 什么都得自己硬撑。")
+    write_diary(game, f"{name}{saying}。")
+
+
+def sickness_day(game, indoors):
+    """生病受伤的人每天掉血, 同时一天天好起来。躲在车里休养好得快一倍, 有医生照顾也更快"""
+    doctor = skilled(game, "医生")
+    for name in list(game["sick"]):
+        disease, days = game["sick"][name]
+        damage = -DISEASES[disease][0]
+        if len(game["party"]) == 1:
+            damage += SOLO_SICK_DAMAGE
+        days -= 2 if indoors else 1
+        if doctor and doctor != name:
+            days -= 1
+        hurt(game, name, damage)
+        if name not in game["party"]:   # 没撑过去
+            continue
+        if days <= 0:
+            del game["sick"][name]
+            print(f"{name}的{disease}好了。")
+        else:
+            game["sick"][name][1] = days
+
+
+def catch_diseases(game, hungry, cold_people, traveling):
+    """每天看看有没有人生病: 健康越差越容易病; 挨饿、受冻、开太快、辐射高, 也会更容易病"""
+    for name in list(game["party"]):
+        if name in game["sick"]:
+            continue
+        reasons = []
+        if hungry:
+            reasons.append("挨饿")
+        if name in cold_people:
+            reasons.append("受冻")
+        if traveling and game["pace"] == 3:
+            reasons.append("开太快")
+        if radiation_level(game["rads"].get(name, 0))[2]:
+            reasons.append("辐射高")
+        chance = SICK_CHANCE + (100 - game["party"][name]) * SICK_CHANCE_PER_HEALTH
+        likely = list(COMMON_DISEASES)
+        for reason in reasons:
+            extra, disease = SICK_CAUSES[reason]
+            chance += extra
+            if disease:
+                likely += [disease, disease]   # 跟这个情况有关的病更容易得
+        if random.random() < chance:
+            get_sick(game, name, random.choice(likely))
+
+
 def find_supplies(game):
     item = random.choice(list(LOOT))
     low, high = LOOT[item]
     amount = random.randint(low, high)
-    game["supplies"][item] += amount
-    print(f"找到了{item}, 一共 {amount} 个!")
+    print(f"找到了 {amount} {MEASURES[item]}{item}!")
+    add_supplies(game, item, amount)
 
 
 def climate_here(game):
@@ -519,6 +683,7 @@ def new_game():
         "leader": "",       # 主角的名字
         "jobs": {},         # 队员名字 -> 职业 (主角和路上的陌生人没有职业)
         "rads": {},         # 队员名字 -> 辐射值 (0 到 100, 没记的就是 0)
+        "sick": {},         # 生病受伤的队员: 名字 -> [病名, 还要几天才好]
         "diary": [],        # 旅行日记: 路上发生的大事, 一条一条记下来
     }
 
@@ -545,7 +710,7 @@ def setup(game):
     print("\n出发前可以在营地买东西。")
     print("提示: 每人每天要吃食物、喝 1 份水, 车每天要用燃料。子弹可以打猎, 也可以防身。"
           "天冷时每人要有一套冬衣。")
-    print("      路上的辐射会在身体里越积越多, 只有排辐剂能把它排掉。")
+    print("      路上会生病受伤, 药品能治好; 辐射会在身体里越积越多, 只有排辐剂能把它排掉。")
     shop(game)
 
 
@@ -561,12 +726,15 @@ def shop(game):
     items = list(PRICES)
     while True:
         print(f"\n------ 商店 ------  你有 {game['money']} 块钱")
+        print(f"车上: {show_weight(game, load_of(game))} / {show_weight(game, CAR_CAPACITY)}, "
+              f"还能装 {show_weight(game, max(0, CAR_CAPACITY - load_of(game)))}")
         merchant = skilled(game, "商人")
         if merchant:
             print(f"商人{merchant}帮你讲价, 买什么都打八折。")
         for i, item in enumerate(items, 1):
-            measure = "套" if item == "冬衣" else "个"
-            print(f"{i}. {item}  {PRICES[item]} 块一{measure}  (现在有 {game['supplies'][item]})")
+            measure = MEASURES[item]
+            print(f"{i}. {item}  {PRICES[item]} 块一{measure}, 每{measure} {show_weight(game, WEIGHTS[item])}"
+                  f"  (现在有 {game['supplies'][item]})")
         print("0. 离开商店")
         choice = ask_number("买什么? ", 0, len(items))
         if choice == 0:
@@ -575,6 +743,9 @@ def shop(game):
         most = game["money"] // PRICES[item]
         while cost_of(game, item, most + 1) <= game["money"]:   # 打折以后能多买几个
             most += 1
+        if room_for(game, item) < most:
+            most = room_for(game, item)
+            print(f"车上只装得下 {most} {MEASURES[item]}{item}了。")
         amount = ask_number(f"买多少{item}? (最多 {most}) ", 0, most)
         game["supplies"][item] += amount
         game["money"] -= cost_of(game, item, amount)
@@ -593,11 +764,14 @@ def show_status(game):
     people = []
     for n, h in game["party"].items():
         job = f"[{game['jobs'][n]}]" if n in game["jobs"] else ""
+        sick = game["sick"].get(n)
+        sick_note = f" {sick[0]}" if sick else ""
         rads = game["rads"].get(n, 0)
         rads_note = f" 辐射{rads}" if radiation_level(rads)[2] else ""   # 辐射到了会掉血的程度才显示, 免得这一行太长
-        people.append(f"{n}{job} {health_word(h)}({h}){rads_note}")
+        people.append(f"{n}{job} {health_word(h)}({h}){sick_note}{rads_note}")
     print("队员: " + "  ".join(people))
-    print(f"口粮: {RATIONS[game['ration']][0]}  速度: {PACES[game['pace']][0]}")
+    print(f"口粮: {RATIONS[game['ration']][0]}  速度: {PACES[game['pace']][0]}"
+          f"  载重: {show_weight(game, load_of(game))} / {show_weight(game, CAR_CAPACITY)}")
     name, km = next_place(game)
     shop_note = " (据点, 可以买东西)" if name in [n for n, _ in OUTPOSTS.values()] else ""
     print(f"下一站: {name}{shop_note}, 还有 {show_distance(game, km - game['distance'])}")
@@ -625,6 +799,15 @@ def show_party(game):
         _, rads_word, rads_health = radiation_level(rads)
         rads_note = f" {rads_word}, 每天掉 {-rads_health} 点健康" if rads_health else ""
         print(f"{name}{tag}  健康 {h} {health_word(h)}  {health_bar(h)}  辐射 {rads}{rads_note}")
+        if name in game["sick"]:
+            disease, days = game["sick"][name]
+            damage = -DISEASES[disease][0]
+            alone = ""
+            if len(game["party"]) == 1:
+                damage += SOLO_SICK_DAMAGE
+                alone = " (没人照顾, 病得更重)"
+            print(f"    {disease}: {DISEASES[disease][3]}, 每天掉 {damage} 点健康{alone}, "
+                  f"大约还要 {days} 天才好 (躲在车里休养好得快一倍, 用药品马上就好)")
         if name in game["jobs"]:
             print(f"    特长: {SKILLS[game['jobs'][name]]}")
     average = sum(game["party"].values()) // len(game["party"])
@@ -640,7 +823,9 @@ def show_party(game):
     food_per_day = people * per_person
     print(f"食物: {s['食物']} 份。口粮{ration_name}, 每天吃 {food_per_day} 份 (天冷要多吃), "
           f"还够吃 {s['食物'] // food_per_day} 天")
-    print(f"水: {s['水']} 份。每天喝 {people} 份 (天热要多喝), 还够喝 {s['水'] // people} 天")
+    cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
+    water_per_day = people + cholera * CHOLERA_WATER
+    print(f"水: {s['水']} 份。每天喝 {water_per_day} 份 (天热、有人得霍乱要多喝), 还够喝 {s['水'] // water_per_day} 天")
     fuel_days = s["燃料"] // fuel_per_day
     print(f"燃料: {s['燃料']} 份。速度{pace_name}, 每天用 {fuel_per_day} 份, "
           f"还够开 {fuel_days} 天, 大约 {show_distance(game, fuel_days * km)}")
@@ -651,12 +836,22 @@ def show_party(game):
     print(f"药品 {s['药品']}  排辐剂 {s['排辐剂']}  零件 {s['零件']}  子弹 {s['子弹']}  钱 {game['money']}")
     print(f"离{DESTINATION}还有 {show_distance(game, TOTAL_DISTANCE - game['distance'])}")
 
+    print("\n---------- 车上的重量 ----------")
+    people_weight = people * PERSON_WEIGHT
+    print(f"人 {show_weight(game, people_weight)}  物资 {show_weight(game, load_of(game) - people_weight)}  "
+          f"一共 {show_weight(game, load_of(game))} / {show_weight(game, CAR_CAPACITY)}, "
+          f"还能装 {show_weight(game, max(0, CAR_CAPACITY - load_of(game)))}")
+    heaviest = max(WEIGHTS, key=lambda item: s[item] * WEIGHTS[item])
+    if s[heaviest]:
+        print(f"最重的是{heaviest}: {show_weight(game, s[heaviest] * WEIGHTS[heaviest])}")
+
 
 # ========== 每天发生的事 ==========
 
-def pass_day(game, health_bonus=0, indoors=False):
-    """过一天: 吃东西、喝水、更新健康, 再换成明天的天气。
-    indoors=True 表示躲在车里, 不受风吹雨打 (但天冷时没穿冬衣还是会冻着, 辐射风暴也挡不住全部)。"""
+def pass_day(game, health_bonus=0, indoors=False, traveling=False):
+    """过一天: 吃东西、喝水、更新健康、养病、看看有没有人生病, 再换成明天的天气。
+    indoors=True 表示躲在车里, 不受风吹雨打 (但天冷时没穿冬衣还是会冻着, 辐射风暴也挡不住全部),
+    生病的人也好得更快。traveling=True 表示今天在赶路。"""
     s = game["supplies"]
     people = len(game["party"])
     _, per_person, ration_health = RATIONS[game["ration"]]
@@ -666,30 +861,42 @@ def pass_day(game, health_bonus=0, indoors=False):
         change += WEATHER[game["weather"]][1] + outdoor_health
 
     # 食物和水不够的话, 有多少吃多少, 缺得越多健康掉得越多
+    hungry = game["ration"] == 1   # 口粮选了"少", 也算挨饿
     food_need = people * (per_person + extra_food)
     if s["食物"] >= food_need:
         s["食物"] -= food_need
     else:
         change -= round(10 * (food_need - s["食物"]) / food_need)
         s["食物"] = 0
+        hungry = True
         print(f"食物不够了, {everyone(game)}在挨饿!")
 
-    water_need = people * (1 + extra_water)
-    if s["水"] >= water_need:
+    cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
+    water_need = people * (1 + extra_water) + cholera * CHOLERA_WATER
+    dirty_water = s["水"] < water_need
+    if not dirty_water:
         s["水"] -= water_need
     else:
         change -= round(15 * (water_need - s["水"]) / water_need)
         s["水"] = 0
-        print(f"干净的水不够了, {everyone(game)}渴得受不了!")
+        print(f"干净的水不够了, {everyone(game)}渴得受不了, 只能喝路边的脏水!")
 
     change_all_health(game, change)
-    freeze(game, cold_health)
+    cold_people = freeze(game, cold_health)
 
     # 辐射: 先算今天受了多少辐射, 再看辐射高的人掉多少血
     _, _, outdoor_rads, indoor_rads, _ = WEATHER[game["weather"]]
     for name in game["party"]:
         irradiate(game, name, indoor_rads if indoors else outdoor_rads)
     radiation_damage(game)
+
+    # 生病: 已经病了的人养病, 再看看今天有没有人病倒
+    sickness_day(game, indoors)
+    if dirty_water:
+        for name in list(game["party"]):
+            if random.random() < DIRTY_WATER_CHANCE:
+                get_sick(game, name, random.choice(["霍乱", "痢疾"]))
+    catch_diseases(game, hungry, cold_people, traveling)
 
     game["day"] += 1
     roll_weather(game)
@@ -708,6 +915,7 @@ def travel(game):
         print("\n燃料不够, 车开不动了! 试试换慢一点的速度, 或者去搜刮废墟找燃料。")
         return
     s["燃料"] -= fuel_need
+    drive_animation(game)
     km = round((km + random.randint(-10, 10)) * speed)
     km = min(km, TOTAL_DISTANCE - game["distance"])   # 最后一段路不多算
     game["distance"] += km
@@ -717,7 +925,7 @@ def travel(game):
         print(f"\n车往前开了 {show_distance(game, km)}。")
     check_places(game)
     random_event(game, km)
-    pass_day(game, pace_health)   # 一天结束: 吃喝、更新健康、换成明天的天气
+    pass_day(game, pace_health, traveling=True)   # 一天结束: 吃喝、更新健康、换成明天的天气
 
 
 def rest(game):
@@ -742,6 +950,10 @@ def scavenge(game):
         print("什么有用的都没找到。")
     else:
         find_supplies(game)
+    if game["party"] and random.random() < TETANUS_CHANCE:
+        victim = random_member(game)
+        print(f"{victim} 在废墟里被生锈的铁皮划了一道口子……")
+        get_sick(game, victim, "破伤风")
 
 
 def hunt(game):
@@ -769,66 +981,102 @@ def hunt(game):
         food = food * 3 // 2   # 猎人收拾猎物更干净, 肉多一半
     if typed != word:
         print("手一抖打歪了, 猎物跑掉了。")
-    elif seconds <= 3:
-        print(f"砰! 只用了 {seconds:.1f} 秒, 一枪命中! 得到 {food} 份食物。")
-        s["食物"] += food
-        write_diary(game, f"打猎打到一只{animal}, 得到 {food} 份食物。")
     elif seconds <= 6:
-        food //= 2
-        print(f"用了 {seconds:.1f} 秒, 只打伤了它, 追了半天才拿回 {food} 份食物。")
-        s["食物"] += food
-        write_diary(game, f"打猎打伤了一只{animal}, 拿回 {food} 份食物。")
+        if seconds <= 3:
+            print(f"砰! 只用了 {seconds:.1f} 秒, 一枪命中! 打到了 {food} 份肉。")
+            how = "打到"
+        else:
+            food //= 2
+            print(f"用了 {seconds:.1f} 秒, 只打伤了它, 追了半天才拿回 {food} 份肉。")
+            how = "打伤了"
+        if hunter:
+            print(f"(猎人{hunter}帮忙收拾猎物, 肉多了一半。)")
+        brought = carry_meat(game, food)
+        write_diary(game, f"打猎{how}一只{animal}, 带回 {brought} 份食物。")
     else:
         print(f"用了 {seconds:.1f} 秒, 太慢了, 猎物早就跑了。")
-    if hunter and typed == word and seconds <= 6:
-        print(f"(猎人{hunter}帮忙收拾猎物, 肉多了一半。)")
     pass_day(game)
 
 
+def carry_meat(game, food):
+    """打到的肉要扛回车上: 每个人只扛得动 CARRY_PER_PERSON 那么多, 车上也要装得下。返回真正带回来的份数"""
+    most = len(game["party"]) * CARRY_PER_PERSON // WEIGHTS["食物"]
+    if food > most:
+        print(f"肉太多了, {you(game)}只扛得动 {most} 份, 剩下的只能留在原地。")
+        food = most
+    return add_supplies(game, "食物", food)
+
+
 def take_medicine(game):
-    """主菜单的「用药」: 选用药品治伤, 还是用排辐剂排辐射"""
+    """每天的菜单里的「用药」: 先选用药品还是排辐剂, 再选给谁用"""
     s = game["supplies"]
-    print(f"\n1. 药品 (现在有 {s['药品']}): 治伤, 给健康最低的人用")
-    print(f"2. 排辐剂 (现在有 {s['排辐剂']}): 排掉 {ANTI_RAD} 点辐射, 给辐射最高的人用")
+    print(f"\n1. 药品 (现在有 {s['药品']}): 治好病或伤, 再恢复一些健康")
+    print(f"2. 排辐剂 (现在有 {s['排辐剂']}): 排掉 {ANTI_RAD} 点辐射")
     print("0. 不用了")
     choice = ask_number("用哪种药? ", 0, 2)
+    if choice == 0:
+        return
+    item = "药品" if choice == 1 else "排辐剂"
+    if s[item] == 0:
+        print(f"\n你没有{item}了。")
+        return
+    name = choose_member(game, f"给谁用{item}? ")
+    if name is None:
+        return
     if choice == 1:
-        use_medicine(game)
-    elif choice == 2:
-        use_anti_rad(game)
+        use_medicine(game, name)
+    else:
+        use_anti_rad(game, name)
 
 
-def use_anti_rad(game):
-    s = game["supplies"]
-    if s["排辐剂"] == 0:
-        print("\n你没有排辐剂了。")
-        return
-    name = max(game["party"], key=lambda n: game["rads"].get(n, 0))   # 找辐射最高的人
+def choose_member(game, prompt):
+    """让玩家从队伍里选一个人, 会列出每个人的健康、病和辐射。只有一个人时不用选。选 0 就返回 None"""
+    names = list(game["party"])
+    if len(names) == 1:
+        return names[0]
+    print()
+    for i, name in enumerate(names, 1):
+        sick = game["sick"].get(name)
+        sick_note = f"  {sick[0]}" if sick else ""
+        print(f"{i}. {name}  健康 {game['party'][name]}{sick_note}  辐射 {game['rads'].get(name, 0)}")
+    print("0. 不用了")
+    choice = ask_number(prompt, 0, len(names))
+    return names[choice - 1] if choice else None
+
+
+def use_anti_rad(game, name):
+    """给一个人打一针排辐剂"""
     if game["rads"].get(name, 0) == 0:
-        print("\n现在没人受到辐射, 不需要用排辐剂。")
+        print(f"\n{name} 身上没有辐射, 不需要用排辐剂。")
         return
-    s["排辐剂"] -= 1
+    game["supplies"]["排辐剂"] -= 1
     irradiate(game, name, -ANTI_RAD)
     print(f"\n{name} 打了一针排辐剂, 辐射降到了 {game['rads'][name]}。")
 
 
-def use_medicine(game):
-    s = game["supplies"]
-    if s["药品"] == 0:
-        print("\n你没有药品了。")
+def use_medicine(game, name):
+    """给一个人用药品: 治好他的病或伤, 再恢复一些健康 (有医生在恢复得更多)"""
+    sick = game["sick"].get(name)
+    if not sick and game["party"][name] >= 100:
+        print(f"\n{name} 没病没伤, 不需要用药。")
         return
-    name = min(game["party"], key=game["party"].get)   # 找健康最低的人
-    if game["party"][name] >= 100:
-        print("\n现在没人受伤, 不需要用药。")
-        return
-    s["药品"] -= 1
+    game["supplies"]["药品"] -= 1
     doctor = skilled(game, "医生")
     heal = 60 if doctor else 35
     game["party"][name] = min(100, game["party"][name] + heal)
-    if doctor:
-        print(f"\n医生{doctor}给 {name} 用了药, {name} 好多了。")
+    if doctor == name:
+        giver = f"医生{name}给自己"
+    elif doctor:
+        giver = f"医生{doctor}给 {name} "
+    elif name == game["leader"]:
+        giver = "你给自己"
     else:
-        print(f"\n你给 {name} 用了药, {name} 感觉好多了。")
+        giver = f"你给 {name} "
+    if sick:
+        del game["sick"][name]
+        print(f"\n{giver}用了药, {name}的{sick[0]}治好了。")
+    else:
+        print(f"\n{giver}用了药, {name} 感觉好多了。")
 
 
 def change_ration(game):
@@ -888,7 +1136,7 @@ def check_places(game):
 
 
 def offer_recruit(game, place, km=None):
-    """据点里有个人愿意免费跟你走, 车上坐满了就带不了"""
+    """据点里有个人愿意免费跟你走, 车上坐满了、或者太重了就带不了"""
     if place not in RECRUITS:
         return
     name, job = RECRUITS[place]
@@ -897,12 +1145,18 @@ def offer_recruit(game, place, km=None):
     if len(game["party"]) >= MAX_PARTY:
         print(f"这里有个叫 {name} 的{job}也想往西走, 可惜你们的车已经坐满了。")
         return
-    print(f"这里有个叫 {name} 的{job}也想往西走, 愿意跟{you(game)}一起。")
-    print(f"特长: {SKILLS[job]}。但多一个人, 每天也要多吃多喝, 天冷时还要多一套冬衣。")
+    if not has_seat_for_one_more(game):
+        print(f"这里有个叫 {name} 的{job}也想往西走, 可惜车上东西太重, 再坐一个人就超载了。")
+        return
+    brings = "和".join(f" {amount} 份{item}" for item, amount in RECRUIT_BRINGS.items())
+    print(f"这里有个叫 {name} 的{job}也想往西走, 愿意跟{you(game)}一起, 还会带上自己的{brings}。")
+    print(f"特长: {SKILLS[job]}。不过多一个人, 每天也要多吃多喝, 天冷时还要多一套冬衣。")
     if ask_number(f"1. 让{name}加入  2. 不用了  ", 1, 2) == 1:
         game["party"][name] = 100
         game["jobs"][name] = job
-        print(f"{name} 加入了队伍!")
+        print(f"{name} 带着自己的{brings}加入了队伍!")
+        for item, amount in RECRUIT_BRINGS.items():
+            add_supplies(game, item, amount)
         write_diary(game, f"{job}{name}在{place}加入了队伍。", km)
     else:
         print(f"{name} 点点头, 留在了{place}。")
@@ -933,6 +1187,8 @@ def raiders(game):
             print(f"劫匪被打跑了, 但是 {victim} 中枪受伤了。")
             write_diary(game, f"遇到劫匪, 打跑了他们, 但是 {victim} 中枪受伤了。")
             hurt(game, victim, 35)
+            if random.random() < INFECTION_CHANCE:
+                get_sick(game, victim, "伤口感染")
         return
 
     if choice == 3 and s["燃料"] >= 3:
@@ -994,6 +1250,8 @@ def mutant_attack(game):
         print(f"子弹不够! {victim} 被咬伤了。")
         write_diary(game, f"遇到一群变异野狗, 子弹不够, {victim} 被咬伤了。")
         hurt(game, victim, 30)
+        if random.random() < INFECTION_CHANCE:
+            get_sick(game, victim, "伤口感染")
 
 
 def radiation_sickness(game):
@@ -1019,6 +1277,9 @@ def trader(game):
     if s["食物"] < 20:
         print("可惜你的食物不够, 换不了。")
         return
+    if CAR_CAPACITY - load_of(game) + 20 * WEIGHTS["食物"] < 8 * WEIGHTS["燃料"]:   # 给出 20 份食物以后, 装不装得下 8 份燃料
+        print("可惜车上太重了, 装不下 8 份燃料, 换不了。")
+        return
     if ask_number("1. 换  2. 不换  ", 1, 2) == 1:
         s["食物"] -= 20
         s["燃料"] += 8
@@ -1035,6 +1296,9 @@ def stranger(game):
     print(f"「{pick(game, '大哥', '大姐')}, 带上我吧, 我什么活都能干!」")
     if len(game["party"]) >= MAX_PARTY:
         print(f"可惜车上已经坐满了, 只能让 {name} 自己走。")
+        return
+    if not has_seat_for_one_more(game):
+        print(f"可惜车上东西太重, 再坐一个人就超载了, 只能让 {name} 自己走。")
         return
     print("多一个人能多一份力气, 但每天也要多吃多喝。")
     if ask_number(f"1. 让{name}加入  2. 拒绝  ", 1, 2) == 2:
@@ -1071,6 +1335,7 @@ def minefield(game):
         print(f"轰! 车轮压到了一颗地雷, {victim} 受了重伤。")
         write_diary(game, f"开过雷区时压到地雷, {victim} 受了重伤。")
         hurt(game, victim, 40)
+        get_sick(game, victim, "骨折")
     else:
         print(f"{you(game)}小心翼翼地开了过去, 什么都没炸。")
         write_diary(game, "冒险开过了一片雷区, 平安无事。")
@@ -1182,19 +1447,189 @@ def delete_save():
         os.remove(SAVE_FILE)
 
 
-# ========== 主循环 ==========
+# ========== 过场动画 ==========
+
+# 赶路时的画面: 车停在中间往西 (左) 开, 背景往右退。远处的山退得慢, 近处的东西退得快, 看起来就有远近
+SCENE_WIDTH = 60
+SCENE_SKY = "       v                       .                  v          "     # 天上盘旋的秃鹫
+SCENE_FAR = "      /\\           __/\\__              /\\/\\          ___/\\_   "   # 远处的山
+SCENE_NEAR = [                                                                  # 近处的废墟、枯树、破车
+    "       _               \\ /                        ._.          ",
+    "     _| |_      __     _|_        ___            |  |    \\|/  ",
+    "    |  |  |    /  \\   |   |      /_x_\\    .      |  |_    |   ",
+]
+# 路面上的裂缝要不规则: 要是每隔 4 格一个, 每帧又正好移 4 格, 看起来就像没动 (跟电影里车轮像是倒着转一个道理)
+SCENE_ROAD = "=  =   =   .  =  =    =   , =  ==   =  .   =  =  "
+CAR_ART = [
+    "       ______      ",
+    "  ____/__||__\\___  ",
+    " <_____________o_| ",
+    "   (@)        (@)  ",
+]
+CAR_X = 18                                  # 车画在第几列
+DUST = ["  . o ", " o . O", "O  o .", " . O  "]   # 车尾扬起的尘土, 一帧换一个
+
+
+def scene_slice(tile, offset):
+    """背景是一条可以无限循环的长条, 从里面切出屏幕宽的一段"""
+    start = offset % len(tile)
+    return (tile * 3)[start:start + SCENE_WIDTH]
+
+
+def paint(line, text, x):
+    """把 text 画在 line 的第 x 列上。text 里的空格是透明的, 会透出后面的背景"""
+    chars = list(line)
+    for i, ch in enumerate(text):
+        if ch != " " and 0 <= x + i < len(chars):
+            chars[x + i] = ch
+    return "".join(chars)
+
+
+def road_scene(frame, speed):
+    """画出第 frame 帧。speed 是车速 (1 慢, 2 中, 3 快), 越快背景退得越快"""
+    moved = frame * speed
+    rows = [scene_slice(SCENE_SKY, -moved // 6), scene_slice(SCENE_FAR, -moved // 3)]
+    rows += [scene_slice(line, -moved) for line in SCENE_NEAR]
+    rows.append("_" * SCENE_WIDTH)                          # 地平线
+    rows += [" " * SCENE_WIDTH for _ in CAR_ART]            # 车开在这几行
+    rows.append(scene_slice(SCENE_ROAD, -moved))            # 路面
+    top = len(rows) - 1 - len(CAR_ART)
+    for i, part in enumerate(CAR_ART):
+        rows[top + i] = paint(rows[top + i], part, CAR_X)
+    rows[top + 2] = paint(rows[top + 2], DUST[frame % len(DUST)], CAR_X + len(CAR_ART[2].rstrip()))
+    return rows
+
+
+def enable_ansi():
+    """动画要用控制字符把光标往上移, 好让新的一帧盖掉旧的。
+    Mac 和 Linux 的终端本来就认得; Windows 的要先把这个功能打开"""
+    if os.name != "nt":
+        return
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)                # -11 表示"屏幕输出"
+        mode = ctypes.c_uint32()
+        kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+        kernel32.SetConsoleMode(handle, mode.value | 4)    # 4 就是"认得控制字符"的开关
+    except (AttributeError, OSError):
+        pass
+
+
+def drive_animation(game):
+    """赶路时播放的过场动画。只在真正的终端里播放, 跑测试或者用管道输入时不播"""
+    if not ANIMATION or not can_read_keys():
+        return
+    enable_ansi()
+    print("\x1b[?25l", end="")   # 先把光标藏起来, 不然它会在画面上一闪一闪
+    try:
+        print()
+        for frame in range(ANIMATION_FRAMES):
+            rows = road_scene(frame, game["pace"])
+            if frame:
+                print(f"\x1b[{len(rows)}A", end="")   # 光标往上移回画面顶上, 用新的一帧盖掉旧的
+            print("\n".join(rows), flush=True)
+            time.sleep(ANIMATION_DELAY)
+    finally:
+        print("\x1b[?25h", end="", flush=True)   # 不管怎么结束 (包括按 Ctrl+C), 都要把光标显示回来
+
+
+# ========== 开始界面 ==========
+
+# 开始画面: 远处的蘑菇云和废墟, 路上一辆车
+TITLE_ART = r"""
+                        _.-~~~~~~~-._
+                    .-~~   .-~~~-.   ~~-.
+                   (     (         )     )
+                    `-._  `~~---~~'  _.-'
+                        `~~--. .--~~'
+                             | |
+                             | |
+       __        ___         | |          __     _
+      |  |___   |   |   _    | |    ____ |  |___| |
+   ___|  |   |__|   |__| |___|_|___|    ||  |   | |___
+  ____________________________________________________
+        ____
+    ___/_[]_\____
+   |o            o|>
+ ==(@)==========(@)===================================
+"""
+
+
+def title_screen():
+    print(TITLE_ART)
+    print("                     废  土  之  旅")
+    print("              W A S T E L A N D   T R A I L")
+    print(f"                          {VERSION}")
+
+
+def show_help():
+    """主菜单里的「游戏说明」"""
+    miles = round(TOTAL_DISTANCE * UNITS["英里"])
+    capacity_kg = CAR_CAPACITY // 1000
+    capacity_lb = round(capacity_kg * WEIGHT_UNITS["英里"][1])
+    print(f"""
+========== 游戏说明 ==========
+你被赶出了密苏里州独立城地下的避难所, 要开车沿着当年拓荒者走过的俄勒冈小道,
+去 {TOTAL_DISTANCE} 公里 ({miles} 英里) 外的{DESTINATION}。只要还有人活着走到, 就算成功。
+
+每天可以选一件事做:
+  继续前进  开车赶路, 要用燃料。开得越快越费燃料, 人也越累
+  休息一天  躲在车里养伤养病, 不怕风吹雨打
+  搜刮废墟  也许能找到物资, 也可能碰上危险
+  打猎      屏幕上出现英文词就飞快打出来, 越快肉越多 (记得先切换成英文输入法)
+  用药      药品治病治伤, 排辐剂排辐射, 自己选给谁用
+  还可以改变口粮和速度、查看队伍、看旅行日记、存档。这几样不花时间
+
+路上要注意:
+  - 每人每天都要吃要喝。天热要多喝水, 天冷要多吃东西, 还得每人一套冬衣
+  - 车最多装 {capacity_kg} 公斤 ({capacity_lb} 磅), 人也算在里面, 装不下就拿不了。燃料最重, 要算好在哪里补给
+  - 天气按走到哪里、几月份变。坏天气车开得慢, 酸雨和辐射风暴天最好躲在车里
+  - 辐射会在身体里越积越多, 只有排辐剂能排掉
+  - 健康越差越容易生病。生病了要休息, 或者用药品治
+  - 路上的据点能买东西, 每个据点还有一个人愿意跟你走
+  - 带上队友更安全; 一个人走省吃省喝, 可生病了没人照顾
+  - 3 月出发天冷, 7 月出发天热, 4~6 月最好走
+""")
+    input("按回车回到主菜单……")
+
+
+# ========== 主菜单和主循环 ==========
 
 def main():
-    print("========== 废土之旅 ==========")
-    game = load_game()
-    if game:
-        print(f"发现存档: {date_text(game)} (第 {game['day']} 天), "
-              f"已经走了 {show_distance(game, game['distance'])}。")
-        if ask_number("1. 继续上次的游戏  2. 开始新游戏  ", 1, 2) == 2:
-            game = None
-    if not game:
-        game = new_game()
-        setup(game)
+    """主菜单: 开始新游戏、继续游戏、看说明, 或者退出。一局玩完会回到这里"""
+    while True:
+        title_screen()
+        saved = load_game()
+        if saved:
+            note = f"{date_text(saved)}, 已走 {show_distance(saved, saved['distance'])}"
+        else:
+            note = "没有存档"
+        print(f"\n1. 开始新游戏\n2. 继续游戏 ({note})\n3. 游戏说明\n4. 退出游戏")
+        choice = ask_number("选哪一项? ", 1, 4)
+        if choice == 1:
+            if saved:
+                print("\n已经有一个存档了, 开始新游戏会把它删掉。")
+                if ask_number("1. 确定, 开始新游戏  2. 回到主菜单  ", 1, 2) == 2:
+                    continue
+                delete_save()
+            game = new_game()
+            setup(game)
+            play(game)
+        elif choice == 2:
+            if saved:
+                play(saved)
+            else:
+                print("\n还没有存档, 先开始一局新游戏吧。")
+                input("按回车回到主菜单……")
+        elif choice == 3:
+            show_help()
+        else:
+            print("\n下次再见!")
+            return
+
+
+def play(game):
+    """玩一局, 直到走到终点、全军覆没, 或者存档后回到主菜单"""
     actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: take_medicine,
                6: change_ration, 7: change_pace, 8: show_party, 9: show_diary}
 
@@ -1213,8 +1648,7 @@ def main():
         choice = ask_number("你要做什么? ", 1, 10)
         if choice == 10:
             save_game(game)
-            if ask_number("1. 继续玩  2. 退出游戏  ", 1, 2) == 2:
-                print("下次再见!")
+            if ask_number("1. 继续玩  2. 回到主菜单  ", 1, 2) == 2:
                 return
             continue
         actions[choice](game)
@@ -1222,6 +1656,7 @@ def main():
     delete_save()
     show_diary(game)
     print("\n====== 游戏结束 ======")
+    input("按回车回到主菜单……")
 
 
 if __name__ == "__main__":
