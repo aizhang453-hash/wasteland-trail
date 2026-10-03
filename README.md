@@ -33,7 +33,7 @@ python3 wasteland_trail.py
 
 ## 参与开发
 
-欢迎提 bug、提建议、改代码, 具体看 [贡献指南](CONTRIBUTING.md)。
+欢迎提 bug、提建议, 具体看 [贡献指南](CONTRIBUTING.md)。
 
 改完代码后可以跑自动测试, 检查有没有弄坏东西:
 
@@ -43,4 +43,6 @@ python3 -m unittest
 
 ## 许可证
 
-[MIT](LICENSE): 可以随便用、随便改, 只要保留原作者的署名。
+版权所有。可以下载来自己玩, 但没有作者的许可, 不能修改、转发、发布或者拿去赚钱。详见 [LICENSE](LICENSE)。
+
+v1.5 及以前的版本是按 MIT 许可证发布的, 那些版本仍然适用 MIT。

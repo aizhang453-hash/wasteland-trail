@@ -1,21 +1,54 @@
-MIT License
+废土之旅 许可协议 (个人游玩许可)
 
-Copyright (c) 2026 aizhang453-hash
+Copyright (c) 2026 aizhang453-hash. 保留所有权利。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. 允许: 你可以免费下载本游戏, 在自己的电脑上运行和游玩。仅限个人、非商业用途。
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+2. 不允许 (除非事先得到作者的书面许可):
+   - 修改本游戏的代码或内容, 或者在它的基础上制作新的作品;
+   - 复制、转发、上传, 或者用任何方式再发布本游戏 (包括修改过的版本);
+   - 把本游戏或其中任何部分用于商业用途;
+   - 把本游戏代码的任何部分用到其他项目里。
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+3. 申请许可: 请在 GitHub 仓库开一个 Issue 联系作者:
+   https://github.com/aizhang453-hash/wasteland-trail/issues
+
+4. 按照 GitHub 的服务条款, 别人可以在 GitHub 上查看和 Fork (复制) 本仓库,
+   但这不代表获得了上面第 2 条里的任何权利。
+
+5. 本游戏按"原样"提供, 不附带任何担保。作者不对使用本游戏造成的任何损失负责。
+
+6. v1.5 及更早的版本是按 MIT 许可证发布的, 那些版本仍然适用 MIT 许可证。
+   本协议从 v1.6 开始生效。
+
+中文版本和下面的英文版本如果有不一致, 以中文版本为准。
+
+----------------------------------------------------------------------
+
+Wasteland Trail License (Personal Play License)
+
+Copyright (c) 2026 aizhang453-hash. All rights reserved.
+
+1. Permitted: You may download this game free of charge and run and play it
+   on your own computer, for personal, non-commercial use only.
+
+2. Not permitted without the author's prior written permission:
+   - modifying the game's code or content, or creating derivative works;
+   - copying, sharing, uploading, or otherwise redistributing the game
+     (including modified versions);
+   - using the game or any part of it for commercial purposes;
+   - using any part of the game's code in other projects.
+
+3. To request permission, open an issue on the GitHub repository:
+   https://github.com/aizhang453-hash/wasteland-trail/issues
+
+4. Under GitHub's Terms of Service, others may view and fork this repository
+   on GitHub, but doing so does not grant any of the rights listed in item 2.
+
+5. The game is provided "as is", without warranty of any kind. The author is
+   not liable for any damages arising from its use.
+
+6. Versions v1.5 and earlier were released under the MIT License, and those
+   versions remain under the MIT License. This license applies from v1.6 on.
+
+If the Chinese and English versions differ, the Chinese version prevails.
