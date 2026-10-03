@@ -69,6 +69,11 @@ def health_word(h):
     return "危险"
 
 
+def pick(game, male_word, female_word):
+    """按主角的性别选一个称呼, 比如 pick(game, "大哥", "大姐")"""
+    return male_word if game["gender"] == "男" else female_word
+
+
 def random_member(game):
     return random.choice(list(game["party"]))
 
@@ -124,6 +129,7 @@ def new_game():
         "weather": "晴朗",
         "visited": set(),   # 已经到过的据点
         "seeds": False,     # 有没有找到种子库(隐藏结局)
+        "gender": "男",     # 主角的性别
     }
 
 
@@ -133,6 +139,8 @@ def setup(game):
     print(f"你要带着队伍开车穿过废土, 到 {TOTAL_DISTANCE} 公里外的安全城市。")
     print(f"冬天会在第 {WINTER_DAY} 天到来, 一定要在那之前赶到。\n")
     leader = input("你叫什么名字? (直接按回车就叫\"队长\") ").strip() or "队长"
+    gender = ask_number("你的性别: 1. 男  2. 女  ", 1, 2)
+    game["gender"] = "男" if gender == 1 else "女"
     names = [leader]
     spare = [n for n in DEFAULT_NAMES if n != leader]
     random.shuffle(spare)
@@ -338,6 +346,7 @@ def radiation_storm(game):
 def raiders(game):
     s = game["supplies"]
     print("\n【劫匪】一伙劫匪拦住了路!")
+    print(f"「{pick(game, '小子', '丫头')}, 把东西交出来, 饶你们不死!」")
     print("1. 交出一些物资  2. 开枪(要 15 发子弹)  3. 加速逃跑(要 3 份燃料)")
     choice = ask_number("你怎么办? ", 1, 3)
 
@@ -411,7 +420,8 @@ def bad_water(game):
 
 def trader(game):
     s = game["supplies"]
-    print("\n【流浪商人】一个流浪商人想跟你换东西: 20 份食物换 8 份燃料。")
+    print("\n【流浪商人】一个背着大包的流浪商人凑了过来:")
+    print(f"「{pick(game, '老兄', '妹子')}, 20 份食物换 8 份燃料, 换不换?」")
     if s["食物"] < 20:
         print("可惜你的食物不够, 换不了。")
         return
@@ -427,6 +437,7 @@ def stranger(game):
     while name in game["party"] or name in game["dead"]:
         name += "2"
     print(f"\n【陌生人】路边有个叫 {name} 的幸存者, 想跟你们一起走。")
+    print(f"「{pick(game, '大哥', '大姐')}, 带上我吧, 我什么活都能干!」")
     print("多一个人能多一份力气, 但每天也要多吃多喝。")
     if ask_number(f"1. 让{name}加入  2. 拒绝  ", 1, 2) == 2:
         print(f"{name} 失望地走开了。")
