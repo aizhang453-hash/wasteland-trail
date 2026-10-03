@@ -35,7 +35,7 @@ def random_player(rng):
         if "买什么" in prompt:
             return rng.choice(["0", "0", "1", "2", "3", "4", "5", "6"])
         if "你要做什么" in prompt:      # 一半时候往前开, 这样才能走得远、遇到更多事
-            return rng.choice(["1", "1", "1", "1", "1", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
+            return rng.choice(["1", "1", "1", "1", "1", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
         if "退出游戏" in prompt:        # 存档后大多数时候接着玩
             return "2" if rng.random() < 0.05 else "1"
         if rng.random() < 0.1:
@@ -294,6 +294,35 @@ class GameTest(unittest.TestCase):
                       "还够吃 15 天", "还够开 15 天, 大约 1575 公里"]:
             self.assertIn(words, text)
         self.assertEqual(game["day"], 1)
+
+    def test_diary(self):
+        """旅行日记会记下出发、经过的地方、谁加入了、谁去世了, 而且带着天数和路程"""
+        answers = iter(["1", "小明", "1", "0"])   # 公里、名字、男、不买东西
+        game = w.new_game()
+        with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
+            w.setup(game)
+        game["distance"] = 510   # 一路开到卡尼堡, 带上杰克, 不买东西
+        with mock.patch("builtins.input", lambda p="": "1" if "加入" in p else "2"), \
+                redirect_stdout(io.StringIO()):
+            w.check_places(game)
+            w.hurt(game, "杰克", 100)
+        diary = "\n".join(game["diary"])
+        for words in ["小明被赶出了独立城地下的避难所", "经过了堪萨斯河渡口", "到了卡尼堡",
+                      "老兵杰克在卡尼堡加入了队伍", "杰克 去世了", "第 1 天, 已走 510 公里"]:
+            self.assertIn(words, diary)
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            w.show_diary(game)
+        self.assertIn("到了卡尼堡", screen.getvalue())
+
+    def test_recruit_with_same_name_as_leader(self):
+        """主角也叫杰克时, 卡尼堡的杰克还是能加入 (改名叫杰克2)"""
+        game = new_test_game()
+        game["party"] = {"杰克": 100}
+        with mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(io.StringIO()):
+            w.offer_recruit(game, "卡尼堡")
+        self.assertEqual(game["party"], {"杰克": 100, "杰克2": 100})
+        self.assertEqual(game["jobs"], {"杰克2": "老兵"})
 
     def test_hunting(self):
         """打得又快又对: 拿全部的肉; 慢一点: 一半; 太慢或打错: 没有"""

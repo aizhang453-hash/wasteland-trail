@@ -8,9 +8,25 @@
 
 需要 Python 3.6 或更高版本, 不用装任何别的东西。
 
+1. 在 [Releases](https://github.com/aizhang453-hash/wasteland-trail/releases) 页面找到最新版本, 下载 **Source code (zip)**, 解压
+2. 打开终端 (Mac 叫「终端」, Windows 叫「命令提示符」或「PowerShell」), 进入解压出来的文件夹
+3. 输入下面的命令开始玩:
+
+Mac / Linux:
+
 ```bash
 python3 wasteland_trail.py
 ```
+
+Windows:
+
+```bash
+python wasteland_trail.py
+```
+
+Windows 电脑如果提示找不到 python, 要先去 [python.org](https://www.python.org/downloads/) 下载安装, 安装时记得勾选「Add Python to PATH」。
+
+小提示: 打猎时要输入英文单词, 记得先把输入法切换成英文。
 
 ## 玩法
 
@@ -25,7 +41,8 @@ python3 wasteland_trail.py
 - 打猎是个小游戏: 屏幕上出现一个词, 打得越快, 得到的肉越多
 - 路上会遇到劫匪、变异野兽、雷区、陌生人、神秘无线电等随机事件
 - 随时可以查看队伍 (主菜单选 8): 每个人的健康和特长, 还有食物、水、燃料大概还能撑几天
-- 随时可以存档 (主菜单选 9), 下次打开游戏接着玩。一局结束后存档会自动删掉
+- 旅行日记 (主菜单选 9): 路上发生的大事都会自动记下来, 游戏结束时会把整本日记回顾一遍
+- 随时可以存档 (主菜单选 10), 下次打开游戏接着玩。一局结束后存档会自动删掉
 
 ## 结局
 

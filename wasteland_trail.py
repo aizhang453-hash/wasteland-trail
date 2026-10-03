@@ -157,12 +157,30 @@ def random_member(game):
     return random.choice(list(game["party"]))
 
 
+def write_diary(game, text, km=None, day=None):
+    """往旅行日记里记一笔: 第几天、走到哪了、发生了什么。只记大事, 不记每天的赶路。
+    km 和 day 不填, 就用现在走到的路程和今天是第几天"""
+    km = game["distance"] if km is None else km
+    day = game["day"] if day is None else day
+    game["diary"].append(f"第 {day} 天, 已走 {show_distance(game, km)}: {text}")
+
+
+def show_diary(game):
+    """查看旅行日记。不花时间"""
+    print("\n========== 旅行日记 ==========")
+    if not game["diary"]:
+        print("日记里还什么都没有。")
+    for line in game["diary"]:
+        print(line)
+
+
 def check_deaths(game):
     for name in list(game["party"]):
         if game["party"][name] <= 0:
             del game["party"][name]
             game["dead"].append(name)
             print(f"!!! {name} 没能撑下去, 去世了。")
+            write_diary(game, f"{name} 去世了。")
 
 
 def hurt(game, name, amount):
@@ -212,6 +230,7 @@ def new_game():
         "unit": "公里",     # 显示路程用的单位
         "leader": "",       # 主角的名字
         "jobs": {},         # 队员名字 -> 职业 (主角和路上的陌生人没有职业)
+        "diary": [],        # 旅行日记: 路上发生的大事, 一条一条记下来
     }
 
 
@@ -228,6 +247,7 @@ def setup(game):
     game["gender"] = "男" if gender == 1 else "女"
     game["leader"] = leader
     game["party"][leader] = 100
+    write_diary(game, f"{leader}被赶出了独立城地下的避难所, 一个人踏上了俄勒冈小道。")
 
     print("\n出发前可以在营地买东西。")
     print("提示: 每人每天要吃食物、喝 1 份水, 车每天要用燃料。子弹可以打猎, 也可以防身。")
@@ -353,8 +373,8 @@ def pass_day(game, health_bonus=0, indoors=False):
         s["水"] = 0
         print(f"干净的水不够了, {everyone(game)}渴得受不了!")
 
-    game["day"] += 1
     change_all_health(game, change)
+    game["day"] += 1
     roll_weather(game)
 
 
@@ -374,9 +394,9 @@ def travel(game):
         print(f"\n{weather}里车开不快, 只往前开了 {show_distance(game, km)}。")
     else:
         print(f"\n车往前开了 {show_distance(game, km)}。")
-    pass_day(game, pace_health)
-    random_event(game, km)
     check_places(game)
+    random_event(game, km)
+    pass_day(game, pace_health)   # 一天结束: 吃喝、更新健康、换成明天的天气
 
 
 def rest(game):
@@ -413,7 +433,7 @@ def hunt(game):
     animal = random.choice(list(ANIMALS))
     word = random.choice(HUNT_WORDS)
     print(f"\n{you(game)}拿着枪出去打猎, 远处有一只{animal}……")
-    input("准备好了就按回车, 然后马上打出屏幕上的词, 再按回车!")
+    input("准备好了就按回车, 然后马上打出屏幕上的英文词, 再按回车! (记得先切换成英文输入法)")
     print(f"\n    >>> {word} <<<\n")
     start = time.time()
     typed = input("> ").strip().lower()
@@ -429,10 +449,12 @@ def hunt(game):
     elif seconds <= 3:
         print(f"砰! 只用了 {seconds:.1f} 秒, 一枪命中! 得到 {food} 份食物。")
         s["食物"] += food
+        write_diary(game, f"打猎打到一只{animal}, 得到 {food} 份食物。")
     elif seconds <= 6:
         food //= 2
         print(f"用了 {seconds:.1f} 秒, 只打伤了它, 追了半天才拿回 {food} 份食物。")
         s["食物"] += food
+        write_diary(game, f"打猎打伤了一只{animal}, 拿回 {food} 份食物。")
     else:
         print(f"用了 {seconds:.1f} 秒, 太慢了, 猎物早就跑了。")
     if hunter and typed == word and seconds <= 6:
@@ -506,20 +528,22 @@ def check_places(game):
             continue
         if not can_shop:
             print(f"\n{you(game)}经过了【{name}】。{intro}")
+            write_diary(game, f"经过了{name}。", km)
             continue
         print(f"\n{you(game)}到了【{name}】。{intro}")
-        offer_recruit(game, name)
+        write_diary(game, f"到了{name}。", km)
+        offer_recruit(game, name, km)
         if ask_number("这里有幸存者在做买卖, 要进去买东西吗? 1. 要  2. 不要  ", 1, 2) == 1:
             shop(game)
 
 
-def offer_recruit(game, place):
+def offer_recruit(game, place, km=None):
     """据点里有个人愿意免费跟你走, 车上坐满了就带不了"""
     if place not in RECRUITS:
         return
     name, job = RECRUITS[place]
-    if name in game["party"] or name in game["dead"]:
-        return
+    while name in game["party"] or name in game["dead"]:   # 跟主角或别人重名就加个 2
+        name += "2"
     if len(game["party"]) >= MAX_PARTY:
         print(f"这里有个叫 {name} 的{job}也想往西走, 可惜你们的车已经坐满了。")
         return
@@ -529,6 +553,7 @@ def offer_recruit(game, place):
         game["party"][name] = 100
         game["jobs"][name] = job
         print(f"{name} 加入了队伍!")
+        write_diary(game, f"{job}{name}在{place}加入了队伍。", km)
     else:
         print(f"{name} 点点头, 留在了{place}。")
 
@@ -538,6 +563,7 @@ def offer_recruit(game, place):
 def radiation_storm(game):
     days = random.randint(1, 2)
     print(f"\n【辐射风暴】天空变成了绿色! {you(game)}躲了 {days} 天, 还是受到了辐射。")
+    write_diary(game, f"遇到辐射风暴, 躲了 {days} 天。")
     for _ in range(days):
         pass_day(game, indoors=True)
     change_all_health(game, -10)
@@ -555,11 +581,14 @@ def raiders(game):
         veteran = skilled(game, "老兵")
         if veteran:
             print(f"老兵{veteran}几枪就把劫匪打跑了, 谁都没受伤。")
+            write_diary(game, f"遇到劫匪, 老兵{veteran}把他们打跑了。")
         elif random.random() < 0.7:
             print(f"{you(game)}打退了劫匪!")
+            write_diary(game, "遇到劫匪, 开枪打退了他们。")
         else:
             victim = random_member(game)
             print(f"劫匪被打跑了, 但是 {victim} 中枪受伤了。")
+            write_diary(game, f"遇到劫匪, 打跑了他们, 但是 {victim} 中枪受伤了。")
             hurt(game, victim, 35)
         return
 
@@ -567,6 +596,7 @@ def raiders(game):
         s["燃料"] -= 3
         if random.random() < 0.6:
             print(f"{you(game)}甩掉了劫匪!")
+            write_diary(game, "遇到劫匪, 加速甩掉了他们。")
             return
         print("没跑掉……")
     elif choice != 1:
@@ -576,6 +606,7 @@ def raiders(game):
         s[item] -= s[item] // 3
     game["money"] -= game["money"] // 3
     print("劫匪抢走了三分之一的食物、水、子弹和钱。")
+    write_diary(game, "遇到劫匪, 被抢走了三分之一的食物、水、子弹和钱。")
 
 
 def breakdown(game):
@@ -584,17 +615,21 @@ def breakdown(game):
     mechanic = skilled(game, "机械师")
     if mechanic:
         print(f"机械师{mechanic}钻到车底下鼓捣了一会儿, 没用零件就修好了。")
+        write_diary(game, f"车坏了, 机械师{mechanic}当场修好了。")
     elif s["零件"] > 0:
         s["零件"] -= 1
         print("你用了 1 个备用零件, 很快就修好了。")
+        write_diary(game, "车坏了, 用掉 1 个零件修好了。")
     else:
         print("没有备用零件, 只能自己慢慢修, 花了 3 天。")
+        write_diary(game, "车坏了, 没有零件, 修了 3 天。")
         for _ in range(3):
             pass_day(game)
 
 
 def warehouse(game):
     print("\n【废弃仓库】路边有一个没被搜过的旧仓库!")
+    write_diary(game, "发现一个没被搜过的旧仓库, 找到了一些物资。")
     for _ in range(2):
         find_supplies(game)
 
@@ -610,15 +645,18 @@ def mutant_attack(game):
             print(f"老兵{veteran}枪法准, 只用 5 发子弹就把它们赶走了。")
         else:
             print(f"{you(game)}开枪把它们赶走了, 用掉 10 发子弹。")
+        write_diary(game, "遇到一群变异野狗, 开枪赶走了。")
     else:
         victim = random_member(game)
         print(f"子弹不够! {victim} 被咬伤了。")
+        write_diary(game, f"遇到一群变异野狗, 子弹不够, {victim} 被咬伤了。")
         hurt(game, victim, 30)
 
 
 def radiation_sickness(game):
     victim = random_member(game)
     print(f"\n【辐射病】{victim} 开始掉头发、发烧, 得了辐射病。")
+    write_diary(game, f"{victim} 得了辐射病。")
     hurt(game, victim, 25)
 
 
@@ -627,6 +665,7 @@ def bad_water(game):
     lost = s["水"] // 4
     s["水"] -= lost
     print(f"\n【水被污染】一桶水漏进了脏东西, 倒掉了 {lost} 份水。")
+    write_diary(game, f"一桶水被污染了, 倒掉了 {lost} 份水。")
 
 
 def trader(game):
@@ -640,6 +679,7 @@ def trader(game):
         s["食物"] -= 20
         s["燃料"] += 8
         print("交换成功。")
+        write_diary(game, "跟流浪商人用 20 份食物换了 8 份燃料。")
 
 
 def stranger(game):
@@ -662,9 +702,11 @@ def stranger(game):
         s["食物"] -= food
         s["燃料"] -= fuel
         print(f"第二天早上, {name} 不见了, 还偷走了 {food} 份食物和 {fuel} 份燃料!")
+        write_diary(game, f"收留了陌生人 {name}, 结果被偷走了 {food} 份食物和 {fuel} 份燃料。")
     else:
         game["party"][name] = random.randint(60, 90)
         print(f"{name} 加入了队伍!")
+        write_diary(game, f"路上遇到的 {name} 加入了队伍。")
 
 
 def minefield(game):
@@ -674,6 +716,7 @@ def minefield(game):
     choice = ask_number("你怎么办? ", 1, 2)
     if choice == 1 and s["燃料"] >= 2:
         s["燃料"] -= 2
+        write_diary(game, "绕路避开了一片雷区, 多花了 1 天。")
         pass_day(game)
         print(f"{you(game)}绕开了雷区, 平安无事。")
         return
@@ -682,9 +725,11 @@ def minefield(game):
     if random.random() < 0.4:
         victim = random_member(game)
         print(f"轰! 车轮压到了一颗地雷, {victim} 受了重伤。")
+        write_diary(game, f"开过雷区时压到地雷, {victim} 受了重伤。")
         hurt(game, victim, 40)
     else:
         print(f"{you(game)}小心翼翼地开了过去, 什么都没炸。")
+        write_diary(game, "冒险开过了一片雷区, 平安无事。")
 
 
 def radio_signal(game):
@@ -700,12 +745,15 @@ def radio_signal(game):
         game["seeds"] = True
         print(f"{you(game)}找到了一个旧世界的种子库! 里面封存着几千种植物的种子。")
         print("这些种子也许能让废土重新变绿……一定要把它们带到俄勒冈城!")
+        write_diary(game, "顺着神秘无线电, 找到了一个旧世界的种子库!")
     elif roll < 0.7:
         print("地堡里还剩下不少旧物资!")
+        write_diary(game, "顺着神秘无线电找到一个地堡, 搜到了不少旧物资。")
         for _ in range(3):
             find_supplies(game)
     else:
         print("这是个陷阱! 信号是劫匪放出来的!")
+        write_diary(game, "神秘无线电是劫匪设的陷阱。")
         raiders(game)
 
 
@@ -726,6 +774,7 @@ def random_event(game, km):
 def arrive(game):
     """到达俄勒冈城, 根据路上的情况决定是哪个结局"""
     print(f"\n{you(game)}到达了{DESTINATION}! 一共用了 {game['day'] - 1} 天。")
+    write_diary(game, f"到达了{DESTINATION}!", day=game["day"] - 1)
     print(f"活下来的人: {'、'.join(game['party'])}")
     if game["dead"]:
         print(f"路上失去的人: {'、'.join(game['dead'])}")
@@ -797,7 +846,7 @@ def main():
         game = new_game()
         setup(game)
     actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: use_medicine,
-               6: change_ration, 7: change_pace, 8: show_party}
+               6: change_ration, 7: change_pace, 8: show_party, 9: show_diary}
 
     while True:
         if not game["party"]:
@@ -810,9 +859,9 @@ def main():
 
         show_status(game)
         print("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 使用药品  "
-              "6. 改变口粮  7. 改变速度  8. 查看队伍  9. 存档")
-        choice = ask_number("你要做什么? ", 1, 9)
-        if choice == 9:
+              "6. 改变口粮  7. 改变速度  8. 查看队伍  9. 旅行日记  10. 存档")
+        choice = ask_number("你要做什么? ", 1, 10)
+        if choice == 10:
             save_game(game)
             if ask_number("1. 继续玩  2. 退出游戏  ", 1, 2) == 2:
                 print("下次再见!")
@@ -821,6 +870,7 @@ def main():
         actions[choice](game)
 
     delete_save()
+    show_diary(game)
     print("\n====== 游戏结束 ======")
 
 
