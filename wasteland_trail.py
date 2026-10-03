@@ -4,8 +4,13 @@
 运行方法: 在终端里输入 python wasteland_trail.py
 """
 
+import json
+import os
 import random
 import time
+
+# 存档文件, 放在游戏文件旁边
+SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
@@ -127,14 +132,13 @@ def new_game():
         "ration": 2,
         "pace": 2,
         "weather": "晴朗",
-        "visited": set(),   # 已经到过的据点
+        "visited": [],      # 已经到过的据点
         "seeds": False,     # 有没有找到种子库(隐藏结局)
         "gender": "男",     # 主角的性别
     }
 
 
 def setup(game):
-    print("========== 废土之旅 ==========")
     print("核战争已经过去二十年了。")
     print(f"你要带着队伍开车穿过废土, 到 {TOTAL_DISTANCE} 公里外的安全城市。")
     print(f"冬天会在第 {WINTER_DAY} 天到来, 一定要在那之前赶到。\n")
@@ -327,7 +331,7 @@ def change_pace(game):
 def check_outposts(game):
     for km, name in OUTPOSTS.items():
         if game["party"] and game["distance"] >= km and name not in game["visited"]:
-            game["visited"].add(name)
+            game["visited"].append(name)
             print(f"\n你们到了【{name}】, 这里有幸存者在做买卖。")
             if ask_number("要进去买东西吗? 1. 要  2. 不要  ", 1, 2) == 1:
                 shop(game)
@@ -532,11 +536,50 @@ def arrive(game):
         print("你们活下来了, 但这条路让每个人都付出了代价。")
 
 
+# ========== 存档 ==========
+
+def save_game(game):
+    try:
+        with open(SAVE_FILE, "w", encoding="utf-8") as f:
+            json.dump(game, f, ensure_ascii=False, indent=2)
+        print("\n存档成功! 下次打开游戏可以接着玩。")
+    except OSError:
+        print("\n存档失败了, 可能是文件夹不能写入。")
+
+
+def load_game():
+    """读存档。没有存档或者存档坏了, 就返回 None"""
+    if not os.path.exists(SAVE_FILE):
+        return None
+    try:
+        with open(SAVE_FILE, encoding="utf-8") as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        print("存档文件坏了, 只能开始新游戏。")
+        return None
+    game = new_game()   # 先放好默认值, 这样旧版本的存档少了什么也不怕
+    game.update(saved)
+    return game
+
+
+def delete_save():
+    """一局玩完就删掉存档, 不能读档重来"""
+    if os.path.exists(SAVE_FILE):
+        os.remove(SAVE_FILE)
+
+
 # ========== 主循环 ==========
 
 def main():
-    game = new_game()
-    setup(game)
+    print("========== 废土之旅 ==========")
+    game = load_game()
+    if game:
+        print(f"发现存档: 第 {game['day']} 天, 已经走了 {game['distance']} 公里。")
+        if ask_number("1. 继续上次的游戏  2. 开始新游戏  ", 1, 2) == 2:
+            game = None
+    if not game:
+        game = new_game()
+        setup(game)
     actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: use_medicine,
                6: change_ration, 7: change_pace}
 
@@ -555,10 +598,17 @@ def main():
             break
 
         show_status(game)
-        print("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 使用药品  6. 改变口粮  7. 改变速度")
-        choice = ask_number("你要做什么? ", 1, 7)
+        print("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 使用药品  6. 改变口粮  7. 改变速度  8. 存档")
+        choice = ask_number("你要做什么? ", 1, 8)
+        if choice == 8:
+            save_game(game)
+            if ask_number("1. 继续玩  2. 退出游戏  ", 1, 2) == 2:
+                print("下次再见!")
+                return
+            continue
         actions[choice](game)
 
+    delete_save()
     print("\n====== 游戏结束 ======")
 
 
