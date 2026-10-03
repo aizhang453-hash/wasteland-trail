@@ -21,12 +21,13 @@ try:
 except ImportError:
     msvcrt = None
 
-# 存档文件, 放在游戏文件旁边
+# 存档文件和最高分榜, 都放在游戏文件旁边
 SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
+HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "highscores.json")
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v2.2"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v2.3"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -93,8 +94,31 @@ DROWN_CHANCE = 0.2      # 车在河里翻了, 有人被冲走的机会
 RIVER_RADS = 10         # 车翻了掉进河里, 每个人受多少辐射 (河水也被污染了)
 FERRY_WAIT = 2          # 坐渡船最多要排几天队
 
+# ---------- 最后一段路 ----------
+
+# 当年的拓荒者到了达尔斯, 要么扎木筏顺着哥伦比亚河漂下去, 要么交过路费走绕过胡德山的巴洛路
+LAST_ROAD_FROM = "达尔斯"
+BARLOW_TOLL = 10        # 巴洛路的过路费 (1846 年是每辆马车 5 美元)
+RAPIDS = 4              # 坐木筏一路上要过几段急流 (要漂两天, 每天两段)
+RAPID_SECONDS = 5       # 看到急流以后, 几秒内选对方向才算躲开; 慢了就看运气
+RAPID_HIT_DROWN = 0.15  # 木筏撞上礁石时, 有人掉进河里被冲走的机会
+
+# ---------- 得分 ----------
+
+# 照原版: 走到终点才算分。活下来的每个人按健康给分 (健康的说法见 health_word), 剩下的物资和钱也能换成分
+SCORE_PER_PERSON = {"良好": 500, "一般": 400, "很差": 300, "危险": 200}
+# 剩下的物资怎么算分: 物资 -> (每几个, 算几分)
+SCORE_SUPPLIES = {"食物": (25, 1), "水": (25, 1), "燃料": (5, 1), "子弹": (50, 1),
+                  "零件": (1, 2), "药品": (1, 2), "冬衣": (1, 2), "排辐剂": (1, 2)}
+SCORE_MONEY = 5         # 每剩几块钱算 1 分
+SCORE_SEEDS = 1000      # 把种子库的种子带到终点 (隐藏结局), 再加这么多分
+HIGH_SCORES = 10        # 最高分榜记几名
+
 # 商店价格(每个多少钱)
 PRICES = {"食物": 1, "水": 1, "燃料": 4, "子弹": 1, "零件": 20, "药品": 15, "冬衣": 10, "排辐剂": 20}
+# 在据点卖东西: 据点的人只给买价的百分之几 (有商人帮着讲价能多拿一些)。零头不算
+SELL_SHARE = 50
+MERCHANT_SELL_SHARE = 60
 # 每种物资怎么数 (5 份食物、30 发子弹、1 套冬衣……)
 MEASURES = {"食物": "份", "水": "份", "燃料": "份", "子弹": "发", "零件": "个", "药品": "份", "冬衣": "套", "排辐剂": "支"}
 
@@ -261,6 +285,11 @@ ANIMATION = True          # 不想看就改成 False
 ANIMATION_FRAMES = 24     # 一共几帧
 ANIMATION_DELAY = 0.06    # 每帧停几秒 (24 帧大约 1.5 秒)
 
+# 彩色界面: 只在真正的终端里和网页版里有颜色 (跑测试时没有)。不想要颜色就改成 False
+COLOR = True
+# 用到的颜色: 名字 -> ANSI 控制字符里的颜色编号 (终端和网页版都认得)
+COLORS = {"红": "31", "绿": "32", "黄": "33", "蓝": "34", "紫": "35", "青": "36", "灰": "90"}
+
 # 队伍最多几个人 (包括主角)
 MAX_PARTY = 4
 
@@ -277,7 +306,7 @@ SKILLS = {
     "医生": "用药一次能恢复 60 点健康 (平时是 35); 有医生照顾, 别人生病受伤好得更快",
     "机械师": "车坏了不用零件也能当场修好; 过河时给车接上通气管, 车能开过更深的水",
     "猎人": "打猎得到的肉多一半",
-    "商人": "在据点买东西打八折",
+    "商人": "在据点买东西打八折, 卖东西能卖到六成的价钱 (平时只有一半)",
     "拾荒者": "搜刮废墟一定有收获, 一次能找到两样东西",
 }
 
@@ -370,6 +399,28 @@ def ask_number_by_line(prompt, low, high):
         if text.isdecimal() and low <= int(text) <= high:
             return int(text)
         print(f"请输入 {low} 到 {high} 之间的数字。")
+
+
+def colored(text, color, bold=False):
+    """给一段字上色, 比如 colored("危险", "红")。颜色关掉了、或者不在终端里 (比如跑测试), 就原样返回"""
+    if not color or not COLOR or not (can_read_keys() or IN_BROWSER):
+        return text
+    code = COLORS[color] + (";1" if bold else "")
+    return f"\x1b[{code}m{text}\x1b[0m"   # \x1b[0m 是把颜色变回原样
+
+
+def title(text, color="黄"):
+    """事件和地名的标题, 比如【劫匪】, 带上颜色更显眼"""
+    return colored(f"【{text}】", color, bold=True)
+
+
+def health_color(h):
+    """健康好是绿的, 一般是黄的, 差了是红的"""
+    if h >= 70:
+        return "绿"
+    if h >= 40:
+        return "黄"
+    return "红"
 
 
 def health_word(h):
@@ -516,7 +567,7 @@ def lose_member(game, name, saying, diary_saying=None):
     game["rads"].pop(name, None)
     game["sick"].pop(name, None)
     game["dead"].append(name)
-    print(f"!!! {name} {saying}")
+    print(colored(f"!!! {name} {saying}", "红", bold=True))
     write_diary(game, f"{name} {diary_saying or saying}")
 
 
@@ -576,7 +627,7 @@ def get_sick(game, name, disease):
         return
     _, days, saying, symptom = DISEASES[disease]
     game["sick"][name] = [disease, days]
-    print(f"【{disease}】{name}{saying}! {symptom}。")
+    print(f"{title(disease, '红')}{name}{saying}! {symptom}。")
     if len(game["party"]) == 1:
         print("一个人生病, 没人照顾, 什么都得自己硬撑。")
     write_diary(game, f"{name}{saying}。")
@@ -648,6 +699,26 @@ def temperature_level(temperature):
         if temperature >= level[0]:
             return level
     return TEMPERATURES[-1]
+
+
+def weather_color(weather):
+    """天气的颜色: 不影响赶路的不上色, 会伤人或者拖慢车的是黄的, 最凶的是红的"""
+    if weather in ["辐射风暴", "灰色暴风雪"]:
+        return "红"
+    speed, outdoor_health, outdoor_rads, _, _ = WEATHER[weather]
+    if speed < 1 or outdoor_health < 0 or outdoor_rads > 0:
+        return "黄"
+    return None
+
+
+def temperature_color(temperature):
+    """酷热和严寒是红的, 炎热和寒冷是黄的"""
+    name = temperature_level(temperature)[1]
+    if name in ["酷热", "严寒"]:
+        return "红"
+    if name in ["炎热", "寒冷"]:
+        return "黄"
+    return None
 
 
 def weather_report(game):
@@ -770,7 +841,14 @@ def cost_of(game, item, amount):
     return cost
 
 
-def shop(game):
+def sale_price(game, item, amount):
+    """在据点卖 amount 个 item 能拿到多少钱: 平时只给一半的价钱, 有商人帮着讲价能拿到六成。零头不算"""
+    share = MERCHANT_SELL_SHARE if skilled(game, "商人") else SELL_SHARE
+    return amount * PRICES[item] * share // 100
+
+
+def shop(game, can_sell=False):
+    """商店。can_sell=True 表示在路上的据点里, 还可以把东西卖掉换钱 (出发前的营地只能买)"""
     items = list(PRICES)
     while True:
         print(f"\n------ 商店 ------  你有 {game['money']} 块钱")
@@ -783,10 +861,15 @@ def shop(game):
             measure = MEASURES[item]
             print(f"{i}. {item}  {PRICES[item]} 块一{measure}, 每{measure} {show_weight(game, WEIGHTS[item])}"
                   f"  (现在有 {game['supplies'][item]})")
+        if can_sell:
+            print(f"{len(items) + 1}. 卖东西")
         print("0. 离开商店")
-        choice = ask_number("买什么? ", 0, len(items))
+        choice = ask_number("买什么? ", 0, len(items) + 1 if can_sell else len(items))
         if choice == 0:
             return
+        if choice == len(items) + 1:
+            sell(game)
+            continue
         item = items[choice - 1]
         most = game["money"] // PRICES[item]
         while cost_of(game, item, most + 1) <= game["money"]:   # 打折以后能多买几个
@@ -799,25 +882,55 @@ def shop(game):
         game["money"] -= cost_of(game, item, amount)
 
 
+def sell(game):
+    """在据点卖东西换钱。卖掉的东西也会让车变轻"""
+    items = list(PRICES)
+    share = MERCHANT_SELL_SHARE if skilled(game, "商人") else SELL_SHARE
+    print(f"\n------ 卖东西 ------  据点的人只给买价的 {share}%")
+    merchant = skilled(game, "商人")
+    if merchant:
+        print(f"商人{merchant}帮你讲价, 能卖到六成的价钱。")
+    for i, item in enumerate(items, 1):
+        measure = MEASURES[item]
+        print(f"{i}. {item}  {PRICES[item] * share / 100:g} 块一{measure}  (现在有 {game['supplies'][item]})")
+    print("0. 不卖了")
+    choice = ask_number("卖什么? ", 0, len(items))
+    if choice == 0:
+        return
+    item = items[choice - 1]
+    have = game["supplies"][item]
+    if have == 0:
+        print(f"你没有{item}可以卖。")
+        return
+    amount = ask_number(f"卖多少{item}? (最多 {have}) ", 0, have)
+    money = sale_price(game, item, amount)
+    game["supplies"][item] -= amount
+    game["money"] += money
+    if amount:
+        print(f"卖掉了 {amount} {MEASURES[item]}{item}, 拿到 {money} 块钱。")
+
+
 def show_status(game):
     s = game["supplies"]
     left = TOTAL_DISTANCE - game["distance"]
-    print(f"\n==== {date_text(game)} (第 {game['day']} 天) | 已走 {show_distance(game, game['distance'])}"
-          f" | 还剩 {show_distance(game, left)} ====")
+    print(colored(f"\n==== {date_text(game)} (第 {game['day']} 天) | 已走 {show_distance(game, game['distance'])}"
+                  f" | 还剩 {show_distance(game, left)} ====", "青", bold=True))
+    percent = game["distance"] * 100 // TOTAL_DISTANCE
+    print(f"路程: {colored(progress_bar(game['distance'], TOTAL_DISTANCE, 20), '青')} {percent}%")
     temperature = game["temperature"]
-    print(f"地区: {climate_here(game)[0]}  天气: {game['weather']}  "
-          f"气温: {show_temperature(game, temperature)} {temperature_level(temperature)[1]}")
+    print(f"地区: {climate_here(game)[0]}  天气: {colored(game['weather'], weather_color(game['weather']))}  "
+          f"气温: {show_temperature(game, temperature)} "
+          f"{colored(temperature_level(temperature)[1], temperature_color(temperature))}")
     print(f"    {weather_report(game)}")
     print("物资: " + "  ".join(f"{k} {v}" for k, v in s.items()) + f"  钱 {game['money']}")
-    people = []
+    print("队员:")   # 每人一行, 前面是健康条
     for n, h in game["party"].items():
         job = f"[{game['jobs'][n]}]" if n in game["jobs"] else ""
         sick = game["sick"].get(n)
-        sick_note = f" {sick[0]}" if sick else ""
+        sick_note = colored(f" {sick[0]}", "红") if sick else ""
         rads = game["rads"].get(n, 0)
-        rads_note = f" 辐射{rads}" if radiation_level(rads)[2] else ""   # 辐射到了会掉血的程度才显示, 免得这一行太长
-        people.append(f"{n}{job} {health_word(h)}({h}){sick_note}{rads_note}")
-    print("队员: " + "  ".join(people))
+        rads_note = colored(f" 辐射{rads}", "紫") if radiation_level(rads)[2] else ""   # 辐射到了会掉血的程度才显示
+        print(f"  {health_bar(h)} {n}{job} {colored(f'{health_word(h)}({h})', health_color(h))}{sick_note}{rads_note}")
     print(f"口粮: {RATIONS[game['ration']][0]}  速度: {PACES[game['pace']][0]}"
           f"  载重: {show_weight(game, load_of(game))} / {show_weight(game, CAR_CAPACITY)}")
     name, km = next_place(game)
@@ -832,10 +945,15 @@ def show_status(game):
         print("车上带着: 种子库的种子")
 
 
+def progress_bar(value, total, width):
+    """进度条: value 占 total 的多少, 画成 width 格, 比如 progress_bar(72, 100, 10) 是 [#######...]"""
+    filled = max(0, min(width, round(value * width / total)))
+    return "[" + "#" * filled + "." * (width - filled) + "]"
+
+
 def health_bar(h):
-    """把健康画成一条, 比如 72 -> [#######...]"""
-    filled = round(h / 10)
-    return "[" + "#" * filled + "." * (10 - filled) + "]"
+    """把健康画成一条, 比如 72 -> [#######...]。颜色跟着健康好坏变"""
+    return colored(progress_bar(h, 100, 10), health_color(h))
 
 
 def show_party(game):
@@ -977,7 +1095,8 @@ def travel(game):
     else:
         print(f"\n车往前开了 {show_distance(game, km)}。")
     check_places(game)
-    random_event(game, km)
+    if game["distance"] < TOTAL_DISTANCE:   # 已经到了终点 (比如坐木筏漂到了), 就不会再遇到路上的事
+        random_event(game, km)
     pass_day(game, pace_health, traveling=True)   # 一天结束: 吃喝、更新健康、换成明天的天气
 
 
@@ -1022,7 +1141,7 @@ def hunt(game):
     print("按下回车后, 屏幕上会出现一个英文词。看到后马上把它打出来, 再按一次回车, 越快越好!")
     print("(记得先切换成英文输入法)")
     input("准备好了就按回车……")
-    print(f"\n    >>> {word} <<<\n")
+    print(f"\n    >>> {colored(word, '黄', bold=True)} <<<\n")
     start = time.time()
     typed = input("快打: ").strip().lower()
     seconds = time.time() - start
@@ -1178,21 +1297,23 @@ def check_places(game):
         if not reached(game, km, name):
             continue
         if name in RIVERS:
-            print(f"\n{you(game)}来到了【{name}】。{intro}")
+            print(f"\n{you(game)}来到了{title(name, '青')}{intro}")
             day_end = game["distance"]
             game["distance"] = km        # 等水退、过河的时候, 车停在河边 (日记、天气都按河边算)
             cross_river(game, name)
             game["distance"] = day_end   # 过了河, 接着开完今天的路
             continue
         if not can_shop:
-            print(f"\n{you(game)}经过了【{name}】。{intro}")
+            print(f"\n{you(game)}经过了{title(name, '青')}{intro}")
             write_diary(game, f"经过了{name}。", km)
             continue
-        print(f"\n{you(game)}到了【{name}】。{intro}")
+        print(f"\n{you(game)}到了{title(name, '青')}{intro}")
         write_diary(game, f"到了{name}。", km)
         offer_recruit(game, name, km)
-        if ask_number("这里有幸存者在做买卖, 要进去买东西吗? 1. 要  2. 不要  ", 1, 2) == 1:
-            shop(game)
+        if ask_number("这里有幸存者在做买卖, 要进去买卖东西吗? 1. 要  2. 不要  ", 1, 2) == 1:
+            shop(game, can_sell=True)
+        if name == LAST_ROAD_FROM:
+            choose_last_road(game, km)
 
 
 def offer_recruit(game, place, km=None):
@@ -1329,7 +1450,7 @@ def capsize(game, place, how):
     """车在河里翻了: 物资被冲走一些, 掉进河里的人都受了辐射, 还可能有人被急流冲走。how 是怎么过河时翻的, 写进日记"""
     river = RIVERS[place][0]
     s = game["supplies"]
-    print(f"\n【翻车】车在{river}中间被急流冲翻了!")
+    print(f"\n{title('翻车', '红')}车在{river}中间被急流冲翻了!")
     lost = []
     for item in s:
         if s[item] and random.random() < 0.5:   # 每样东西有一半的机会被冲走一些
@@ -1352,13 +1473,111 @@ def capsize(game, place, how):
         print(f"{everyone(game)}好不容易把车拖上了对岸。")
 
 
+# ========== 最后一段路: 漂流还是走巴洛路 ==========
+
+def choose_last_road(game, km):
+    """到了达尔斯, 选最后一段路怎么走。km 是达尔斯离起点几公里"""
+    left = show_distance(game, TOTAL_DISTANCE - km)
+    print(f"\n从{LAST_ROAD_FROM}到{DESTINATION}还剩最后 {left}。当年的拓荒者在这里有两种走法:")
+    print("1. 扎木筏顺着哥伦比亚河漂下去: 不要钱、不用燃料, 两天就到;")
+    print("   可是河上有急流, 撞上礁石会丢东西, 还可能有人掉进河里")
+    print(f"2. 走巴洛路, 开车绕过胡德山: 要交 {BARLOW_TOLL} 块过路费 (你有 {game['money']} 块), 山路要用燃料, 山里还可能下雪")
+    choice = ask_number("走哪条路? ", 1, 2)
+    if choice == 2 and game["money"] < BARLOW_TOLL:
+        print("\n你的钱不够交过路费, 只能扎木筏漂下去了。")
+        choice = 1
+    if choice == 2:
+        game["money"] -= BARLOW_TOLL
+        print(f"\n{you(game)}交了 {BARLOW_TOLL} 块过路费, 沿着巴洛路往胡德山开去。")
+        write_diary(game, f"在{LAST_ROAD_FROM}交了 {BARLOW_TOLL} 块过路费, 走巴洛路绕过胡德山。", km)
+    else:
+        raft_trip(game, km)
+
+
+def raft_trip(game, km):
+    """坐木筏顺着哥伦比亚河漂到终点: 扎木筏花一天, 再漂两天, 一路上要躲开急流里的礁石。
+    漂流的时候车停在木筏上, 路程先按达尔斯算 (天气也按达尔斯一带的河谷算), 漂到了再算走完全程"""
+    game["distance"] = km
+    print(f"\n{you(game)}在{LAST_ROAD_FROM}找来废油桶和木板, 花了一天扎成一个大木筏, 把车也开了上去。")
+    write_diary(game, f"在{LAST_ROAD_FROM}扎了一个木筏, 顺着哥伦比亚河漂下去。")
+    pass_day(game)
+    print("\n木筏顺着哥伦比亚河往下漂。前面会有急流: 看清楚哪边是水道, 就飞快地按那个数字!")
+    for number in range(1, RAPIDS + 1):
+        if not game["party"]:
+            return
+        if number == RAPIDS // 2 + 1:   # 漂了一半, 天黑了, 靠岸过一夜
+            print(f"\n天黑了, {you(game)}把木筏拴在岸边过夜。")
+            pass_day(game)
+            if not game["party"]:
+                return
+        shoot_rapid(game, number)
+    if not game["party"]:
+        return
+    game["distance"] = TOTAL_DISTANCE
+    print(f"\n木筏漂出了峡谷, 河面越来越宽。{you(game)}从威拉米特河口上了岸, 把车开到了{DESTINATION}!")
+    write_diary(game, f"坐木筏顺着哥伦比亚河漂到了{DESTINATION}。")
+
+
+# 急流的画面: 每一条水道 8 格宽, 有礁石和没礁石各画两行 (画里只用英文字符, 中文字在终端里占两格, 会对不齐)
+ROCK_ART = ["  /\\/\\  ", " /_/\\_\\ "]
+WATER_ART = ["  ~  ~  ", "   ~  ~ "]
+LANES = ["左边", "中间", "右边"]
+
+
+def shoot_rapid(game, number):
+    """过一段急流: 三条水道里有礁石, 要在几秒内选一条没礁石的"""
+    rocks = [True, True, True]
+    for lane in random.sample(range(3), random.randint(1, 2)):   # 一两条水道能过
+        rocks[lane] = False
+    print(f"\n{title('急流')}第 {number} 段急流!")
+    print("      1        2        3")   # 数字正好在三条水道的正中间
+    for row in range(2):
+        print("  |" + "|".join(colored(ROCK_ART[row], "红") if rock else colored(WATER_ART[row], "蓝")
+                               for rock in rocks) + "|")
+    print("  " + "  ".join(LANES[i] + (colored("礁石", "红") if rock else colored("水道", "蓝"))
+                           for i, rock in enumerate(rocks)))
+    start = time.time()
+    lane = ask_number("往哪边划? ", 1, 3) - 1
+    seconds = time.time() - start
+    if rocks[lane]:
+        print(f"往{LANES[lane]}划, 正好撞上了礁石!")
+        hit_rock(game)
+    elif seconds > RAPID_SECONDS and random.random() < 0.5:
+        print(f"用了 {seconds:.1f} 秒, 太慢了, 木筏被水流冲歪, 擦着礁石撞了上去!")
+        hit_rock(game)
+    elif seconds > RAPID_SECONDS:
+        print(f"用了 {seconds:.1f} 秒, 有点慢, 好在木筏还是从{LANES[lane]}冲过去了。")
+    else:
+        print(f"木筏从{LANES[lane]}的水道冲了过去, 礁石就在旁边擦过!")
+
+
+def hit_rock(game):
+    """木筏撞上礁石: 一些东西掉进河里, 有人受伤, 还可能有人被冲走"""
+    s = game["supplies"]
+    lost = []
+    for item in random.sample([item for item in s if s[item]], min(2, sum(1 for item in s if s[item]))):
+        amount = max(1, s[item] * random.randint(20, 50) // 100)
+        s[item] -= amount
+        lost.append(f"{amount} {MEASURES[item]}{item}")
+    if lost:
+        print(f"掉进河里冲走了: {'、'.join(lost)}。")
+    victim = random_member(game)
+    if random.random() < RAPID_HIT_DROWN:
+        lose_member(game, victim, "掉进了哥伦比亚河, 被急流冲走了。")
+    else:
+        print(f"{victim} 撞伤了, 还呛了几口带辐射的河水。")
+        irradiate(game, victim, RIVER_RADS)
+        hurt(game, victim, random.randint(10, 20))
+    write_diary(game, "木筏在哥伦比亚河的急流里撞上了礁石。")
+
+
 # ========== 随机事件(想加新事件就照着写一个函数, 再放进 EVENTS) ==========
 # (辐射风暴以前是随机事件, 现在是天气, 写在 roll_weather 里)
 
 
 def raiders(game):
     s = game["supplies"]
-    print("\n【劫匪】一伙劫匪拦住了路!")
+    print(f"\n{title('劫匪', '红')}一伙劫匪拦住了路!")
     print(f"「{pick(game, '小子', '丫头')}, 把东西交出来, 饶{you(game)}不死!」")
     print("1. 交出一些物资  2. 开枪(要 15 发子弹)  3. 加速逃跑(要 3 份燃料)")
     choice = ask_number("你怎么办? ", 1, 3)
@@ -1400,7 +1619,7 @@ def raiders(game):
 
 def breakdown(game):
     s = game["supplies"]
-    print("\n【车坏了】车子突然停下, 冒出一股黑烟!")
+    print(f"\n{title('车坏了', '红')}车子突然停下, 冒出一股黑烟!")
     mechanic = skilled(game, "机械师")
     if mechanic:
         print(f"机械师{mechanic}钻到车底下鼓捣了一会儿, 没用零件就修好了。")
@@ -1417,7 +1636,7 @@ def breakdown(game):
 
 
 def warehouse(game):
-    print("\n【废弃仓库】路边有一个没被搜过的旧仓库!")
+    print(f"\n{title('废弃仓库')}路边有一个没被搜过的旧仓库!")
     write_diary(game, "发现一个没被搜过的旧仓库, 找到了一些物资。")
     for _ in range(2):
         find_supplies(game)
@@ -1425,7 +1644,7 @@ def warehouse(game):
 
 def mutant_attack(game):
     s = game["supplies"]
-    print("\n【变异野兽】一群变异野狗冲了过来!")
+    print(f"\n{title('变异野兽', '红')}一群变异野狗冲了过来!")
     veteran = skilled(game, "老兵")
     bullets = 5 if veteran else 10
     if s["子弹"] >= bullets:
@@ -1447,7 +1666,7 @@ def mutant_attack(game):
 def radiation_sickness(game):
     victim = random_member(game)
     irradiate(game, victim, SICKNESS_RADS)
-    print(f"\n【辐射病】{victim} 开始掉头发、发烧, 身体里积了太多辐射 (辐射升到了 {game['rads'][victim]})。")
+    print(f"\n{title('辐射病', '紫')}{victim} 开始掉头发、发烧, 身体里积了太多辐射 (辐射升到了 {game['rads'][victim]})。")
     print("不用排辐剂排掉的话, 辐射会一天天折磨人。")
     write_diary(game, f"{victim} 得了辐射病。")
 
@@ -1456,13 +1675,13 @@ def bad_water(game):
     s = game["supplies"]
     lost = s["水"] // 4
     s["水"] -= lost
-    print(f"\n【水被污染】一桶水漏进了脏东西, 倒掉了 {lost} 份水。")
+    print(f"\n{title('水被污染', '红')}一桶水漏进了脏东西, 倒掉了 {lost} 份水。")
     write_diary(game, f"一桶水被污染了, 倒掉了 {lost} 份水。")
 
 
 def trader(game):
     s = game["supplies"]
-    print("\n【流浪商人】一个背着大包的流浪商人凑了过来:")
+    print(f"\n{title('流浪商人')}一个背着大包的流浪商人凑了过来:")
     print(f"「{pick(game, '老兄', '妹子')}, 20 份食物换 8 份燃料, 换不换?」")
     if s["食物"] < 20:
         print("可惜你的食物不够, 换不了。")
@@ -1482,7 +1701,7 @@ def stranger(game):
     name = random.choice(STRANGER_NAMES)
     while name in game["party"] or name in game["dead"]:
         name += "2"
-    print(f"\n【陌生人】路边有个叫 {name} 的幸存者, 想跟{you(game)}一起走。")
+    print(f"\n{title('陌生人')}路边有个叫 {name} 的幸存者, 想跟{you(game)}一起走。")
     print(f"「{pick(game, '大哥', '大姐')}, 带上我吧, 我什么活都能干!」")
     if len(game["party"]) >= MAX_PARTY:
         print(f"可惜车上已经坐满了, 只能让 {name} 自己走。")
@@ -1509,7 +1728,7 @@ def stranger(game):
 
 def minefield(game):
     s = game["supplies"]
-    print("\n【雷区】路边插着一块歪掉的牌子: \"小心地雷\"。")
+    print(f"\n{title('雷区', '红')}路边插着一块歪掉的牌子: \"小心地雷\"。")
     print("1. 绕路(多花 1 天和 2 份燃料)  2. 慢慢开过去")
     choice = ask_number("你怎么办? ", 1, 2)
     if choice == 1 and s["燃料"] >= 2:
@@ -1532,7 +1751,7 @@ def minefield(game):
 
 
 def radio_signal(game):
-    print("\n【神秘无线电】收音机里传来断断续续的声音, 好像在说附近有个旧世界的地堡。")
+    print(f"\n{title('神秘无线电')}收音机里传来断断续续的声音, 好像在说附近有个旧世界的地堡。")
     if ask_number("要花 2 天去找吗? 1. 去  2. 不去  ", 1, 2) == 2:
         return
     for _ in range(2):
@@ -1571,7 +1790,7 @@ def random_event(game, km):
 # ========== 结局 ==========
 
 def arrive(game):
-    """到达俄勒冈城, 根据路上的情况决定是哪个结局"""
+    """到达俄勒冈城, 根据路上的情况决定是哪个结局。返回结局的名字 (比如"完美结局"), 记最高分时要用"""
     last_day = game["day"] - 1
     print(f"\n{date_text(game, last_day)}, {you(game)}到达了{DESTINATION}! 一共用了 {last_day} 天。")
     write_diary(game, f"到达了{DESTINATION}!", day=last_day)
@@ -1582,23 +1801,109 @@ def arrive(game):
         print(f"{game['leader']} 没能走到这里, 是同伴们替{game['leader']}走完了这条路。")
 
     if game["seeds"]:
-        print("\n【隐藏结局: 绿色的希望】")
+        ending = "隐藏结局"
+        print("\n" + title("隐藏结局: 绿色的希望", "绿"))
         print("城里的科学家打开种子库, 激动得说不出话。")
         print("第二年春天, 城墙外第一次长出了麦子。废土开始变绿了。")
     elif not game["dead"] and len(game["party"]) == 1:
-        print("\n【独行结局: 一个人走完全程】")
+        ending = "独行结局"
+        print("\n" + title("独行结局: 一个人走完全程", "绿"))
         print("没有人陪你, 也没有人掉队。你一个人走完了整条俄勒冈小道。")
     elif not game["dead"]:
-        print("\n【完美结局: 一个都不少】")
+        ending = "完美结局"
+        print("\n" + title("完美结局: 一个都不少", "绿"))
         print("所有人都平安到达。城门打开的那一刻, 大家抱在一起哭了。")
     elif len(game["party"]) == 1:
         name = list(game["party"])[0]
-        print("\n【孤独结局: 最后一个人】")
+        ending = "孤独结局"
+        print("\n" + title("孤独结局: 最后一个人", "绿"))
         print(f"{name} 一个人走进城门, 身后的车里空荡荡的。")
         print("活下来的人, 要带着所有人的那一份继续活下去。")
     else:
-        print("\n【普通结局: 带着伤痕到达】")
+        ending = "普通结局"
+        print("\n" + title("普通结局: 带着伤痕到达", "绿"))
         print("你们活下来了, 但这条路让每个人都付出了代价。")
+    return ending
+
+
+# ========== 得分和最高分 ==========
+
+def score_of(game):
+    """算分: 活下来的人按健康给分, 剩下的物资和钱也换成分。返回 (总分, 每一项怎么算的)"""
+    total = 0
+    lines = []
+    for name, h in game["party"].items():
+        points = SCORE_PER_PERSON[health_word(h)]
+        total += points
+        lines.append(f"{name} 健康{health_word(h)}: {points} 分")
+    for item, (per, points) in SCORE_SUPPLIES.items():
+        have = game["supplies"][item]
+        got = have // per * points
+        if got:
+            total += got
+            lines.append(f"剩下 {have} {MEASURES[item]}{item}: {got} 分")
+    got = game["money"] // SCORE_MONEY
+    if got:
+        total += got
+        lines.append(f"剩下 {game['money']} 块钱: {got} 分")
+    if game["seeds"]:
+        total += SCORE_SEEDS
+        lines.append(f"带来了种子库的种子: {SCORE_SEEDS} 分")
+    return total, lines
+
+
+def load_high_scores():
+    """读最高分榜: 一个列表, 每一项是一局的成绩 (分数从高到低)。没有文件或者文件坏了, 就当是空的"""
+    if not os.path.exists(HIGH_SCORE_FILE):
+        return []
+    try:
+        with open(HIGH_SCORE_FILE, encoding="utf-8") as f:
+            scores = json.load(f)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(scores, list):
+        return []
+    keys = ["name", "score", "ending", "days", "survivors"]
+    return [entry for entry in scores if isinstance(entry, dict) and all(key in entry for key in keys)]
+
+
+def save_high_scores(scores):
+    try:
+        with open(HIGH_SCORE_FILE, "w", encoding="utf-8") as f:
+            json.dump(scores, f, ensure_ascii=False, indent=2)
+    except OSError:
+        print("最高分没能存下来, 可能是文件夹不能写入。")
+
+
+def record_score(game, ending):
+    """走到终点以后: 算分, 再看看能不能进最高分榜"""
+    total, lines = score_of(game)
+    print("\n========== 得分 ==========")
+    for line in lines:
+        print("  " + line)
+    print(colored(f"总分: {total} 分", "黄", bold=True))
+    entry = {"name": game["leader"], "score": total, "ending": ending,
+             "days": game["day"] - 1, "survivors": len(game["party"])}
+    scores = load_high_scores() + [entry]
+    scores.sort(key=lambda e: e["score"], reverse=True)   # 分数一样时, 先得到的排在前面
+    scores = scores[:HIGH_SCORES]
+    ranks = [i for i, e in enumerate(scores, 1) if e is entry]
+    if not ranks:
+        print(f"没能进前 {HIGH_SCORES} 名, 下次再加油!")
+        return
+    save_high_scores(scores)
+    print(colored(f"进了最高分榜, 第 {ranks[0]} 名!", "绿", bold=True))
+    show_high_scores()
+
+
+def show_high_scores():
+    """主菜单里的「最高分」, 也在进榜的时候给玩家看"""
+    print(f"\n========== 最高分 (前 {HIGH_SCORES} 名) ==========")
+    scores = load_high_scores()
+    if not scores:
+        print("还没有人走到俄勒冈城。走到终点才算分。")
+    for i, e in enumerate(scores, 1):
+        print(f"{i:>2}. {e['score']:>5} 分  {e['name']}  {e['ending']}, 用了 {e['days']} 天, {e['survivors']} 个人到达")
 
 
 # ========== 存档 ==========
@@ -1691,7 +1996,7 @@ def road_scene(frame, speed):
 
 
 def enable_ansi():
-    """动画要用控制字符把光标往上移, 好让新的一帧盖掉旧的。
+    """颜色和动画都要用控制字符 (比如动画要把光标往上移, 好让新的一帧盖掉旧的)。
     Mac 和 Linux 的终端本来就认得; Windows 的要先把这个功能打开"""
     if os.name != "nt":
         return
@@ -1747,8 +2052,8 @@ TITLE_ART = r"""
 
 
 def title_screen():
-    print(TITLE_ART)
-    print("                     废  土  之  旅")
+    print(colored(TITLE_ART, "灰"))
+    print(colored("                     废  土  之  旅", "绿", bold=True))
     print("              W A S T E L A N D   T R A I L")
     print(f"                          {VERSION}")
 
@@ -1779,9 +2084,13 @@ def show_help():
   - 健康越差越容易生病。生病了要休息, 或者用药品治
   - 路上要过 5 条大河。水浅可以直接开过去, 水深了就绑上空油桶浮过去 (可能翻车),
     有的河边有渡船, 花钱最安全。春天化雪、刚下过雨, 河水都会涨, 等几天水也许会退
-  - 路上的据点能买东西, 每个据点还有一个人愿意跟你走
+  - 路上的据点能买东西, 也能把用不上的东西卖掉换钱 (只给一半的价钱); 每个据点还有一个人愿意跟你走
+  - 到了达尔斯, 最后一段路可以扎木筏顺着哥伦比亚河漂下去 (要躲急流里的礁石), 也可以交过路费走巴洛路
   - 带上队友更安全; 一个人走省吃省喝, 可生病了没人照顾
   - 3 月出发天冷, 7 月出发天热, 4~6 月最好走
+
+走到{DESTINATION}才算分: 活下来的人越多、越健康分越高, 剩下的物资和钱也能换成分。
+主菜单的「最高分」里记着前 {HIGH_SCORES} 名。
 """)
     input("按回车回到主菜单……")
 
@@ -1790,6 +2099,7 @@ def show_help():
 
 def main():
     """主菜单: 开始新游戏、继续游戏、看说明, 或者退出。一局玩完会回到这里"""
+    enable_ansi()   # 颜色和动画都要用控制字符, Windows 的终端要先打开这个开关
     while True:
         title_screen()
         saved = load_game()
@@ -1797,8 +2107,8 @@ def main():
             note = f"{date_text(saved)}, 已走 {show_distance(saved, saved['distance'])}"
         else:
             note = "没有存档"
-        print(f"\n1. 开始新游戏\n2. 继续游戏 ({note})\n3. 游戏说明\n4. 退出游戏")
-        choice = ask_number("选哪一项? ", 1, 4)
+        print(f"\n1. 开始新游戏\n2. 继续游戏 ({note})\n3. 游戏说明\n4. 最高分\n5. 退出游戏")
+        choice = ask_number("选哪一项? ", 1, 5)
         if choice == 1:
             if saved:
                 print("\n已经有一个存档了, 开始新游戏会把它删掉。")
@@ -1816,6 +2126,9 @@ def main():
                 input("按回车回到主菜单……")
         elif choice == 3:
             show_help()
+        elif choice == 4:
+            show_high_scores()
+            input("按回车回到主菜单……")
         else:
             print("\n下次再见!")
             return
@@ -1825,14 +2138,15 @@ def play(game):
     """玩一局, 直到走到终点、全军覆没, 或者存档后回到主菜单"""
     actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: take_medicine,
                6: change_ration, 7: change_pace, 8: show_party, 9: show_diary}
+    ending = None   # 走到终点时是哪个结局 (全军覆没就没有, 也不算分)
 
     while True:
         if not game["party"]:
-            print("\n【结局: 全军覆没】")
+            print("\n" + title("结局: 全军覆没", "红"))
             print("所有人都死了。废土上又多了一辆空车……")
             break
         if game["distance"] >= TOTAL_DISTANCE:
-            arrive(game)
+            ending = arrive(game)
             break
 
         show_status(game)
@@ -1848,6 +2162,8 @@ def play(game):
 
     delete_save()
     show_diary(game)
+    if ending:
+        record_score(game, ending)
     print("\n====== 游戏结束 ======")
     input("按回车回到主菜单……")
 
