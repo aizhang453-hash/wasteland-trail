@@ -38,12 +38,16 @@ class GuiTest(unittest.TestCase):
 
     def test_buttons_from_options(self):
         """游戏印出来的「1. 继续前进  2. 休息一天」这些, 变成按钮的号码和名字 (名字只要前面一小段)"""
-        menu = gui.number_question("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 用药\n"
-                                   "6. 改变口粮  7. 改变速度  8. 查看队伍  9. 旅行日记  10. 存档", "你要做什么? ", 1, 10)
+        menu = gui.number_question("1. 继续前进  2. 休息  3. 搜刮废墟  4. 打猎  5. 交易\n"
+                                   "6. 用药  7. 改变口粮  8. 改变速度  9. 丢东西  10. 和人说话\n"
+                                   "11. 查看队伍  12. 旅行日记  13. 存档", "你要做什么? ", 1, 13)
         self.assertEqual(menu["kind"], "choices")
         self.assertTrue(menu["actions"])
         self.assertEqual(menu["choices"][0], [1, "继续前进"])
-        self.assertEqual(menu["choices"][9], [10, "存档"])
+        self.assertEqual(menu["choices"][4], [5, "交易"])
+        self.assertEqual(menu["choices"][8], [9, "丢东西"])
+        self.assertEqual(menu["choices"][9], [10, "和人说话"])
+        self.assertEqual(menu["choices"][12], [13, "存档"])
         cases = [
             ("1. 简单: 一开始有 700 块钱\n2. 普通: 500\n3. 困难: 450", "选哪个? ", 1, 3, ["简单", "普通", "困难"]),
             ("", "距离单位: 1. 公里  2. 英里  ", 1, 2, ["公里", "英里"]),
@@ -51,16 +55,19 @@ class GuiTest(unittest.TestCase):
             ("1. 食物  1 块一份, 每份 0.5 公斤  (现在有 0)\n2. 水  1 块一份\n0. 离开商店", "买什么? ", 0, 2, ["食物", "水", "离开商店"]),
             ("", "1. 确定, 开始新游戏  2. 回到主菜单  ", 1, 2, ["确定", "回到主菜单"]),
             ("", "出发月份 (3~7 月): ", 3, 7, ["3 月", "4 月", "5 月", "6 月", "7 月"]),
+            ("0. 不休息了", "休息几天? (1~3) ", 0, 3, ["不休息了", "1 天", "2 天", "3 天"]),
+            ("1. 食物  180 份, 一共 90 公斤\n2. 水  120 份, 一共 240 公斤\n0. 不丢了", "丢什么? ", 0, 2, ["食物", "水", "不丢了"]),
             ("  左边水道  中间\x1b[31m礁石\x1b[0m  右边礁石", "往哪边划? ", 1, 3, ["左边", "中间", "右边"]),
         ]
         for text, prompt, low, high, labels in cases:
             with self.subTest(prompt=prompt):
                 self.assertEqual([label for _, label in gui.number_question(text, prompt, low, high)["choices"]], labels)
         self.assertEqual(gui.number_question("", "买多少食物? (最多 500) ", 0, 500)["kind"], "number")   # 太多了, 用数字键盘
+        self.assertEqual(gui.number_question("", "你要做什么? ", 1, 20)["kind"], "choices")   # 每天的菜单再长也是按钮
 
     def test_question_above_buttons(self):
         """按钮上面写的问题: 问题里就是选项的话, 用选项前面的字, 或者上面那一句"""
-        self.assertEqual(gui.number_question("", "你要做什么? ", 1, 10)["prompt"], "你要做什么?")
+        self.assertEqual(gui.number_question("", "你要做什么? ", 1, 13)["prompt"], "你要做什么?")
         self.assertEqual(gui.number_question("", "要花 2 天去找吗? 1. 去  2. 不去  ", 1, 2)["prompt"], "要花 2 天去找吗?")
         self.assertEqual(gui.number_question("「20 份食物换 8 份燃料, 换不换?」", "1. 换  2. 不换  ", 1, 2)["prompt"],
                          "「20 份食物换 8 份燃料, 换不换?」")
@@ -157,6 +164,10 @@ js.sleepMs = lambda ms: None
 stops = random.Random(1)
 js.stopRequested = lambda: stops.random() < 0.02
 js.screenSize = lambda: "61,28"
+js.huntToPage = lambda on: messages.append({{"what": "hunt", "on": bool(on)}})
+taps = random.Random(2)   # 打猎时乱点屏幕、乱按键 (7 是点了第几行第几格, 1~6 是方向键、开枪、结束)
+js.huntEvents = lambda: ",".join(str(taps.choice([7000000 + taps.randrange(15) * 1000 + taps.randrange(62), 5000000, 1000000, 4000000, 8001030, 6000000]))
+                                 for _ in range(taps.randrange(3)))
 sys.modules["js"] = js
 import importlib
 import wasteland_trail as w
@@ -189,6 +200,10 @@ print(json.dumps(messages, ensure_ascii=False))
         self.assertEqual(driving[1::2], [False] * len(driving[1::2]))
         states = [message["state"] for message in messages if message["what"] == "state" and message["state"]]
         self.assertTrue(states and all("party" in state for state in states))
+        hunts = [message["on"] for message in messages if message["what"] == "hunt"]
+        self.assertTrue(hunts)   # 网页里打猎是瞄准射击的那种
+        self.assertEqual(hunts[::2], [True] * len(hunts[::2]))   # 开始打猎、打完了, 一对一对的
+        self.assertEqual(hunts[1::2], [False] * len(hunts[1::2]))
 
 
 if __name__ == "__main__":

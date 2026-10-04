@@ -2,13 +2,13 @@
 网页版图形界面用的几个小工具: 把游戏现在的状态、正在问的问题, 整理成网页看得懂的样子 (变成 JSON 交给网页)。
 由 web/run_in_browser.py 用。这里不碰网页 (不 import js), 所以在电脑上也能跑测试。
 
-网页上的按钮是怎么来的: 游戏问问题以前会印出选项, 比如「1. 继续前进  2. 休息一天」或者「1. 让杰克加入  2. 不用了」,
+网页上的按钮是怎么来的: 游戏问问题以前会印出选项, 比如「1. 继续前进  2. 休息」或者「1. 让杰克加入  2. 不用了」,
 这里把这些字找出来, 变成「号码 + 名字」, 网页就画成按钮, 点一下等于输入那个号码。游戏本身不用改。
 """
 
 import re
 
-# 「1. 继续前进  2. 休息一天」这样的选项: 号码、点、空格, 后面是名字, 一直到下一个「两个空格 + 号码 + 点」或者这一行完
+# 「1. 继续前进  2. 休息」这样的选项: 号码、点、空格, 后面是名字, 一直到下一个「两个空格 + 号码 + 点」或者这一行完
 OPTION = re.compile(r"(?:^|\s)(\d+)\.\s+(.+?)(?=\s{2,}\d+\.\s|\s*$)")
 COLOR_CODE = re.compile(r"\x1b\[[\d;]*m")
 MOST_BUTTONS = 12   # 能选的数字超过这么多个 (比如买多少东西), 就不画按钮, 用数字键盘
@@ -35,11 +35,14 @@ def option_labels(text, low, high):
 
 def number_question(text, prompt, low, high):
     """游戏让玩家选 low 到 high 的数字: 能选的不多就画按钮, 太多就用数字键盘"""
-    if high - low + 1 > MOST_BUTTONS:
+    actions = "你要做什么" in prompt   # 每天的菜单, 网页画成带图标的大按钮 (选项再多也是按钮)
+    if high - low + 1 > MOST_BUTTONS and not actions:
         return {"kind": "number", "prompt": prompt.strip(), "low": low, "high": high}
     choices = option_labels(text + "\n" + prompt, low, high)
     if "月份" in prompt:   # 出发月份: 按钮上写「4 月」
         choices = [[number, f"{number} 月"] for number in range(low, high + 1)]
+    if "几天" in prompt:   # 休息几天: 按钮上写「3 天」
+        choices = [[number, label or f"{number} 天"] for number, label in choices]
     if "往哪边" in prompt:   # 过急流: 水道下面那一行「左边水道  中间礁石  右边礁石」
         for line in reversed(COLOR_CODE.sub("", text).split("\n")):
             lanes = line.split()
@@ -47,7 +50,7 @@ def number_question(text, prompt, low, high):
                 choices = [[low + i, lane[:2]] for i, lane in enumerate(lanes)]
                 break
     return {"kind": "choices", "prompt": asked(text, prompt), "choices": choices,
-            "actions": "你要做什么" in prompt}   # 每天的菜单, 网页画成带图标的大按钮
+            "actions": actions}
 
 
 def asked(text, prompt):

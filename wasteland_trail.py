@@ -41,7 +41,7 @@ HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "high
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v3.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v3.2"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -145,6 +145,45 @@ MERCHANT_SELL_SHARE = 60
 # 每种物资怎么数 (5 份食物、30 发子弹、1 套冬衣……)
 MEASURES = {"食物": "份", "水": "份", "燃料": "份", "子弹": "发", "零件": "个", "药品": "份", "冬衣": "套", "排辐剂": "支"}
 
+# ---------- 交易 ----------
+
+# 照原版的「Attempt to trade」: 每天的菜单里选「交易」, 花一天找人换东西; 路上碰到的流浪商人也是这样换。
+# 对方拿出一样东西 (随机的), 换你车上的另一样。换不换自己定
+TRADE_CHANCE = 0.6       # 在路上等一天, 碰到愿意换东西的人的机会 (停在据点里人多, 一定碰得到)
+# 对方一次拿出来换的东西: 物资 -> (最少几个, 最多几个)
+TRADE_LOTS = {"食物": (20, 40), "水": (20, 40), "燃料": (5, 12), "子弹": (20, 40),
+              "零件": (1, 2), "药品": (1, 2), "冬衣": (1, 2), "排辐剂": (1, 1)}
+# 对方要你的东西, 按商店的价钱算, 值他拿出来的东西的百分之几 (最少, 最多): 有时划算, 有时吃亏
+TRADE_ASK = (70, 140)
+MERCHANT_TRADE_ASK = 80  # 有商人帮着讲价, 对方只要原来的八成
+# 来换东西的人
+TRADERS = ["一个推着生锈购物车的老太太", "一个骑着破摩托车的年轻人", "一队从西边回来的拾荒者",
+           "一个背着大包的流浪商人", "一个独眼的老猎人", "一个赶着几头瘦牛的农夫"]
+
+# ---------- 和人说话 ----------
+
+# 照原版的「Talk to people」: 车停在一个地方 (起点、地标、据点、河边、辐射热点) 的时候, 可以跟那里的人聊几句,
+# 听听前面的路况、天气、河有多深。跟世界设定、剧情有关的话, 等背景故事定了再写
+OUTPOST_TALKERS = ["一个在据点门口晒太阳的老人", "据点里修车的师傅", "一个刚从西边回来的拾荒者",
+                   "据点里摆地摊的小贩", "守在墙头上的哨兵"]
+ROAD_TALKERS = ["在这里歇脚的一个旅人", "一个往东走的拾荒者", "一个赶着几头瘦牛的农夫", "在这里扎营的一家人"]
+# 过来人的提醒 (每个地方的人会说其中两句)
+TALK_TIPS = [
+    "下过雨雪, 河水会涨; 在河边等几天, 水也许就退下去了。",
+    "酸雨和辐射风暴的天气, 最好躲在车里, 别在外面淋着。",
+    "干净的水一定要带够。路边的水看着清, 喝下去说不定就是霍乱。",
+    "车太重的话, 把用不上的东西扔了吧, 给有用的东西腾地方。",
+    "人越虚越容易生病。吃饱一点, 累了就歇一歇, 别硬撑。",
+    "夜里睡觉要留个人守着, 这一带小偷多。",
+    "旧公路的路牌早就倒光了, 认不清路的时候, 就看着太阳往西走。",
+    "开得太快, 人颠得受不了, 也更费燃料。",
+]
+
+# ---------- 休息 ----------
+
+MAX_REST_DAYS = 9   # 选「休息」一次最多休息几天
+REST_HEALTH = 8     # 躲在车里休息, 每天多恢复几点健康
+
 # ---------- 重量 ----------
 
 # 重量一律按克算 (整数不会有小数算不准的问题), 显示的时候再换成公斤或磅。
@@ -169,8 +208,18 @@ WEIGHT_UNITS = {"公里": ("公斤", 1), "英里": ("磅", 2.20462)}
 # 口粮: 编号 -> (名字, 每人每天吃几份, 每天健康变化)
 RATIONS = {1: ("少", 1, -2), 2: ("普通", 2, 1), 3: ("饱", 3, 3)}
 
-# 每开 100 公里, 遇到随机事件的机会
+# 每开 100 公里, 遇到随机事件 (EVENTS 里的大事) 的机会
 EVENT_CHANCE_PER_100KM = 0.35
+# 没遇到大事的话, 每开 100 公里遇到小事 (SMALL_EVENTS 里的) 的机会。小事跟大事分开算, 加了小事, 大事也不会变少
+SMALL_EVENT_CHANCE_PER_100KM = 0.15
+# 几种小事的数字 (照原版《俄勒冈之旅》的迷路、着火、小偷、找到野果、废弃的马车、路难走, 做成废土版)
+LOST_DAYS = (1, 2)          # 迷路白白耗掉几天 (最少, 最多); 队伍里有猎人认得路, 只耽误 1 天
+FIRE_BURN = (10, 30)        # 车着火, 烧着的那样东西烧掉百分之几 (最少, 最多); 有机械师扑火, 只烧掉一半那么多
+THEFT = (10, 30)            # 夜里的小偷偷走某样东西的百分之几 (最少, 最多); 有老兵守夜就偷不走
+WILD_FOOD = (10, 30)        # 废弃农场里挖到几份能吃的
+SPRING_WATER = (20, 40)     # 干净的泉水能装几份
+ROUGH_ROAD_BREAK = 0.4      # 烂路上硬冲过去, 把车颠坏的机会
+SNAKE_BITE = (15, 25)       # 被变异响尾蛇咬了掉多少健康 (最少, 最多)
 
 # 速度: 编号 -> (名字, 车每天开几公里, 每天用几份燃料, 每天健康变化)
 PACES = {1: ("慢", 90, 1, 1), 2: ("中", 105, 2, 0), 3: ("快", 120, 3, -2)}
@@ -310,9 +359,23 @@ SOLO_SICK_DAMAGE = 2        # 一个人生病没人照顾 (烧水做饭开车都
 LOOT = {"食物": (10, 40), "水": (10, 30), "燃料": (3, 10),
         "子弹": (10, 30), "零件": (1, 1), "药品": (1, 2), "冬衣": (1, 2), "排辐剂": (1, 1)}
 
-# 打猎: 要飞快打出来的词, 和猎物: 名字 -> (最少食物, 最多食物)
-HUNT_WORDS = ["bang", "pow", "boom", "zap"]
+# 打猎的猎物: 名字 -> (最少食物, 最多食物)
 ANIMALS = {"变异野兔": (10, 25), "双头鹿": (30, 60), "辐射野猪": (50, 90)}
+# 打猎小游戏 (照原版: 动物在原野上跑来跑去, 移动准星瞄准开枪)。在电脑的终端里用方向键和空格, 网页版用鼠标或手指点
+HUNT_GAME = True        # 改成 False 就是以前那种「看到英文词飞快打出来」的打猎
+HUNT_FRAMES = 150       # 一次打猎有几帧 (每帧 HUNT_DELAY 秒, 150 帧大约 15 秒)
+HUNT_DELAY = 0.1
+HUNT_HEIGHT = 12        # 原野有几行 (宽跟动画一样, SCENE_WIDTH 格)
+HUNT_MAX_ANIMALS = 2    # 原野上最多同时有几只动物
+HUNT_SPAWN = 0.025      # 动物不到最多的时候, 每一帧跑进来一只新动物的机会
+HUNT_STEP = 2           # 按一下左右方向键, 准星横着移几格 (上下方向键移一行)
+# 每种动物: 名字 -> (每帧最少跑几格, 最多跑几格, 跑进来的机会有多大)
+HUNT_ANIMALS = {"变异野兔": (0.9, 1.3, 45), "双头鹿": (0.6, 0.85, 35), "辐射野猪": (0.35, 0.5, 20)}
+# 没打中, 枪声把附近 (这么多格以内) 的动物吓得跑快一些 (快这么多倍)
+HUNT_SCARE_RANGE = 10
+HUNT_SCARE_SPEED = 1.6
+# 以前的打猎 (网页还是旧版、或者跑测试的时候用): 要飞快打出来的词
+HUNT_WORDS = ["bang", "pow", "boom", "zap"]
 
 # 过场动画和画面: 赶路 (跟着天气变)、过河、坐木筏的动画, 还有地标、据点、墓碑、结局的画和每个人的样子。
 # 只在真正的终端里和网页版里有 (跑测试时没有)
@@ -375,11 +438,11 @@ RECRUIT_BRINGS = {"食物": 60, "水": 40}
 
 # 职业的特长: 只要这个人还活着、在队伍里, 特长就一直有用
 SKILLS = {
-    "老兵": "遇到劫匪开枪一定能打赢, 赶走野狗只要 5 发子弹",
-    "医生": "用药一次能恢复 60 点健康 (平时是 35); 有医生照顾, 别人生病受伤好得更快",
-    "机械师": "车坏了不用零件也能当场修好; 过河时给车接上通气管, 车能开过更深的水",
-    "猎人": "打猎得到的肉多一半",
-    "商人": "在据点买东西打八折, 卖东西能卖到六成的价钱 (平时只有一半)",
+    "老兵": "遇到劫匪开枪一定能打赢, 赶走野狗只要 5 发子弹; 夜里守夜, 小偷偷不走东西",
+    "医生": "用药一次能恢复 60 点健康 (平时是 35); 有医生照顾, 别人生病受伤好得更快; 被蛇咬了不会感染",
+    "机械师": "车坏了不用零件也能当场修好; 过河时给车接上通气管, 车能开过更深的水; 车着火能很快扑灭",
+    "猎人": "打猎得到的肉多一半; 认得路, 迷路只耽误一天",
+    "商人": "在据点买东西打八折, 卖东西能卖到六成的价钱 (平时只有一半); 跟人交易时对方少要两成",
     "拾荒者": "搜刮废墟一定有收获, 一次能找到两样东西",
 }
 
@@ -391,6 +454,7 @@ STRANGER_NAMES = ["迈克", "安娜", "老乔", "凯特", "比尔"]
 
 # 是不是在网页版里 (网页里的 Python 叫 Pyodide, 它的 sys.platform 是 "emscripten")
 IN_BROWSER = sys.platform == "emscripten"
+HUNT_IN_BROWSER = False   # 网页认不认得打猎时的点击 (run_in_browser.py 会改成 True; 浏览器里还是旧版的 worker.js 时不认得)
 
 # 屏幕上的字: unread 是有没有玩家还没看过的新消息 (换画面前要先等玩家看完);
 # driving 是车是不是正在一直往前开 (这时候例行消息不印出来, 动画下面的状态栏都看得到);
@@ -682,7 +746,7 @@ def add_supplies(game, item, amount):
     fits = min(amount, room_for(game, item))
     game["supplies"][item] += fits
     if fits < amount:
-        print(f"车上装不下了, 有 {amount - fits} {MEASURES[item]}{item}只能丢下。")
+        print(f"车上装不下了, 有 {amount - fits} {MEASURES[item]}{item}只能丢下。(每天的菜单里可以把用不上的东西丢掉, 腾出地方)")
     return fits
 
 
@@ -1023,6 +1087,7 @@ def new_game():
         "diary": [],        # 旅行日记: 路上发生的大事, 一条一条记下来
         "here": START_PLACE,   # 车现在停在哪个地方 (刚到的地标、据点、河、辐射热点); 车一开走就是 None
         "short": [],        # 昨天不够的东西 ("食物"、"水"): 头一天不够要专门说, 接着不够就只是例行消息
+        "talk": [None, 0],  # 和人说话: [在哪个地方, 在那里已经听了几次] (每次换一个人、说一件事)
     }
 
 
@@ -1160,7 +1225,10 @@ def show_status(game):
           f"气温: {show_temperature(game, temperature)} "
           f"{colored(temperature_level(temperature)[1], temperature_color(temperature))}")
     print(f"    {weather_report(game)}")
-    print("物资: " + "  ".join(f"{k} {v}" for k, v in s.items()) + f"  钱 {game['money']}")
+    # 物资分两行写, 不然东西多了在 80 列宽的终端里放不下, 会折成两行把画面挤乱
+    items = [f"{k} {v}" for k, v in s.items()] + [f"钱 {game['money']}"]
+    print("物资: " + "  ".join(items[:4]))
+    print("      " + "  ".join(items[4:]))
     print("队员:")   # 每人一行, 前面是健康条
     for n, h in game["party"].items():
         job = f"[{game['jobs'][n]}]" if n in game["jobs"] else ""
@@ -1182,8 +1250,8 @@ def show_status(game):
     spot = hotspot_here(game)
     ahead = next_hotspot(game)
     if spot:
-        print(colored(f"辐射热点: 正在{spot[2]}, 在外面每天受 {spot[3]} 点辐射, 躲在车里 {spot[4]} 点。"
-                      f"还要开 {show_distance(game, spot[1] - game['distance'])}才能离开", "紫"))
+        print(colored(f"辐射热点: 正在{spot[2]}, 还要开 {show_distance(game, spot[1] - game['distance'])}才能离开", "紫"))
+        print(colored(f"          在外面每天受 {spot[3]} 点辐射, 躲在车里 {spot[4]} 点", "紫"))
     elif ahead and ahead[0] - game["distance"] <= HOTSPOT_WARNING:
         print(colored(f"辐射热点: 再开 {show_distance(game, ahead[0] - game['distance'])}就到{ahead[2]}, "
                       f"那一带辐射偏高", "紫"))
@@ -1777,8 +1845,34 @@ def recent_events(game):
 
 
 def rest(game):
-    print(f"\n{everyone(game)}躲在车里休息了一天。")
-    pass_day(game, 8, indoors=True)
+    """每天的菜单里的「休息」: 先问休息几天, 再一天一天地过"""
+    print(f"\n休息: {everyone(game)}躲在车里, 不怕风吹雨打, 每天多恢复 {REST_HEALTH} 点健康, 病和伤也好得快一些。")
+    print(f"食物还够 {days_left(game, '食物')} 天, 水还够 {days_left(game, '水')} 天。")
+    print("0. 不休息了")
+    days = ask_number(f"休息几天? (1~{MAX_REST_DAYS}) ", 0, MAX_REST_DAYS)
+    if days:
+        rest_days(game, days)
+
+
+def rest_days(game, days):
+    """躲在车里休息 days 天。中间有人去世、有人病倒, 或者吃的喝的头一回不够了, 就不接着休息了, 让玩家想办法"""
+    if days == 1:
+        print(f"\n{everyone(game)}躲在车里休息了一天。")
+    else:
+        print(f"\n{everyone(game)}打算躲在车里休息 {days} 天……")
+    for day in range(1, days + 1):
+        people, sick, short = len(game["party"]), set(game["sick"]), set(game["short"])
+        if days > 1:
+            print_routine(f"{date_text(game)} {game['weather']}, 休息了一天。")
+        pass_day(game, REST_HEALTH, indoors=True)
+        if not game["party"]:
+            return
+        trouble = len(game["party"]) < people or set(game["sick"]) - sick or set(game["short"]) - short
+        if trouble and day < days:
+            print(colored(f"出了事, 先不休息了 (休息了 {day} 天)。", "黄"))
+            return
+    if days > 1:
+        print(f"休息了 {days} 天, 今天是{date_text(game)}。")
 
 
 def scavenge(game):
@@ -1805,7 +1899,292 @@ def scavenge(game):
 
 
 def hunt(game):
-    """打猎小游戏: 看到词以后越快打出来, 打到的肉越多"""
+    """每天的菜单里的「打猎」(花一天): 像原版那样, 动物在原野上跑来跑去, 移动准星瞄准开枪。
+    不能实时读键盘的时候 (跑测试、网页还是旧版), 还是以前那种打字的打猎"""
+    if not can_aim():
+        typing_hunt(game)
+        return
+    s = game["supplies"]
+    if s["子弹"] == 0:
+        print("\n没有子弹, 打不了猎。")
+        return
+    most = len(game["party"]) * CARRY_PER_PERSON // WEIGHTS["食物"]
+    print(f"\n{title('打猎')}{you(game)}拿着枪来到了原野上。现在有 {s['子弹']} 发子弹, 开一枪用 1 发。")
+    print("变异野兔、双头鹿、辐射野猪会从两边跑过来, 打中了就有肉。")
+    print(f"一次打猎大约 {round(HUNT_FRAMES * HUNT_DELAY)} 秒, 要花一天。想早点回去就按回车。")
+    if IN_BROWSER:
+        print("怎么打: 用鼠标或手指点一下屏幕上的动物, 就朝那里开枪 (电脑上也可以用方向键移动准星、空格开枪)。")
+    else:
+        print("怎么打: 用方向键 (或者 W A S D) 移动准星 +, 按空格开枪。")
+    print(f"{you(game)}一共只扛得动 {most} 份肉 ({show_weight(game, most * WEIGHTS['食物'])}), 打多了也带不回来。")
+    wait_enter("按回车开始打猎……")
+    hunting = hunt_game(game)
+
+    bag = hunting["bag"]
+    food = sum(meat for _, meat in bag)
+    if not bag:
+        print(f"这次开了 {hunting['shots']} 枪, 什么都没打到。")
+    else:
+        counts = {}   # 每种动物打到了几只
+        for name, _ in bag:
+            counts[name] = counts.get(name, 0) + 1
+        names = "、".join(f"{count} 只{name}" for name, count in counts.items())
+        print(f"这次开了 {hunting['shots']} 枪, 打到了 {names}, 一共 {food} 份肉。")
+        hunter = skilled(game, "猎人")
+        if hunter:
+            food = food * 3 // 2   # 猎人收拾猎物更干净, 肉多一半
+            print(f"猎人{hunter}帮忙收拾猎物, 肉多了一半, 有 {food} 份。")
+        brought = carry_meat(game, food)
+        write_diary(game, f"打猎打到{names}, 带回 {brought} 份食物。")
+    pass_day(game)
+
+
+def can_aim():
+    """能不能玩瞄准射击的打猎: 设置里没关掉, 能换画面, 而且能一边画一边读玩家按的键
+    (在真正的终端里; 网页版要网页认得打猎时的点击, 见 run_in_browser.py)"""
+    return HUNT_GAME and can_clear_screen() and (can_read_keys() or HUNT_IN_BROWSER)
+
+
+def new_hunt(game):
+    """打猎开始时的样子: 准星在原野中间, 还没有动物"""
+    return {
+        "aim": [HUNT_HEIGHT // 2, SCENE_WIDTH // 2],   # 准星在原野的第几行、第几格
+        "animals": [],   # 原野上的动物: {"name", "x", "y", "speed" (每帧跑几格, 负数是往左跑), "scared", "dead" (死了几帧, 活着是 None)}
+        "puffs": [],     # 没打中时扬起的土: [行, 格, 还留几帧]
+        "bag": [],       # 打到的: [(名字, 几份肉), ...]
+        "shots": 0,      # 开了几枪
+        "left": HUNT_FRAMES,   # 还剩几帧
+        "over": False,   # 玩家按了回车, 或者子弹打光了
+        "message": "",   # 原野下面写的一句话 (打中了没有)
+        "frame": 0,
+        "ground": hunt_ground(game),
+    }
+
+
+def hunt_game(game):
+    """打猎小游戏本身: 一帧一帧地读玩家按的键 (hunt_keys)、开枪、让动物跑, 再画出来。返回打猎的结果 (见 new_hunt)。
+    不能换画面的时候 (测试里让电脑玩家打猎) 不画也不停, 一下子就玩完"""
+    hunting = new_hunt(game)
+    show = can_clear_screen()
+    reading = can_read_keys()   # 在真正的终端里: 一个键一个键地读
+    old_settings = start_reading_keys() if reading else None
+    try:
+        if show:
+            clear_screen()
+            builtins.print("\x1b[?25l", end="")   # 藏起光标, 不然它在画面上一闪一闪
+            hunt_screen(True)
+        if reading:
+            forget_keys()   # 之前按的键不算
+        while hunting["left"] > 0 and not hunting["over"]:
+            for event in hunt_keys(hunting):
+                hunt_event(game, hunting, event)
+            move_animals(hunting)
+            hunting["left"] -= 1
+            hunting["frame"] += 1
+            if show:
+                builtins.print(redraw(hunt_rows(game, hunting)), end="", flush=True)
+                time.sleep(HUNT_DELAY)
+        if not hunting["over"]:
+            hunting["message"] = "时间到了, 天快黑了。"
+        if show:   # 最后一帧留在画面上, 下面写打到了什么
+            builtins.print(redraw(hunt_rows(game, hunting)) + "\n\x1b[J", end="", flush=True)
+    finally:
+        if show:
+            builtins.print("\x1b[?25h", end="", flush=True)
+            hunt_screen(False)
+        if reading:
+            forget_keys()   # 打猎时多按的键, 不留给下一个问题
+        stop_reading_keys(old_settings)
+    return hunting
+
+
+def hunt_keys(hunting):
+    """打猎时, 上一帧以后玩家按了哪些键: 返回 [("上",), ("开枪",), ("走",) ...]。
+    终端里认方向键、W A S D、空格 (开枪)、回车和 Q (结束)。
+    网页版里 run_in_browser.py 会把它换成读网页上的点击: ("打", 第几行, 第几格) 是点了屏幕上的那一格, ("瞄", 行, 格) 是鼠标移到那里"""
+    keys = []
+    if msvcrt:
+        while msvcrt.kbhit():
+            key = msvcrt.getwch()
+            if key in ("\x00", "\xe0"):   # 方向键: 后面还跟着一个字
+                keys.append({"H": "上", "P": "下", "K": "左", "M": "右"}.get(msvcrt.getwch(), ""))
+            else:
+                keys.append(key)
+    else:
+        text = ""
+        while select.select([sys.stdin], [], [], 0)[0]:
+            data = os.read(sys.stdin.fileno(), 64)
+            if not data:
+                break
+            text += data.decode("utf-8", errors="ignore")
+        keys = split_keys(text)
+    events = []
+    for key in keys:
+        if key == "\x03":   # Ctrl+C
+            raise KeyboardInterrupt
+        action = key if key in ("上", "下", "左", "右") else HUNT_KEYS.get(key.lower())
+        if action:
+            events.append((action,))
+    return events
+
+
+def split_keys(text):
+    """把终端里读到的一串字分成一个一个的键。方向键是 ESC [ A 这样三个字, 换成「上」「下」「左」「右」"""
+    keys = []
+    i = 0
+    while i < len(text):
+        if text[i] == "\x1b" and text[i + 1:i + 2] in ("[", "O") and i + 2 < len(text):
+            keys.append({"A": "上", "B": "下", "C": "右", "D": "左"}.get(text[i + 2], ""))
+            i += 3
+        else:
+            keys.append(text[i])
+            i += 1
+    return keys
+
+
+HUNT_KEYS = {"w": "上", "s": "下", "a": "左", "d": "右", " ": "开枪", "\r": "走", "\n": "走", "q": "走"}
+
+
+def hunt_screen(on):
+    """打猎开始 (on=True) 和结束的时候说一声。电脑上什么都不做; 网页版里 run_in_browser.py 会告诉网页, 网页就把点击当成开枪"""
+
+
+def hunt_event(game, hunting, event):
+    """玩家这一帧按的一个键 (或者网页上的一次点击): 移动准星、开枪, 或者结束打猎"""
+    aim = hunting["aim"]
+    what = event[0]
+    if what == "走":
+        hunting["over"] = True
+        hunting["message"] = "收拾好东西, 回车上去了。"
+    elif what in ("上", "下"):
+        aim[0] = max(0, min(HUNT_HEIGHT - 1, aim[0] + (1 if what == "下" else -1)))
+    elif what in ("左", "右"):
+        aim[1] = max(0, min(SCENE_WIDTH - 1, aim[1] + (HUNT_STEP if what == "右" else -HUNT_STEP)))
+    elif what in ("瞄", "打"):   # 网页上的鼠标、手指: 屏幕上第几行第几格 (原野上面还有一行标题)
+        row, col = event[1] - 1, event[2]
+        if 0 <= row < HUNT_HEIGHT and 0 <= col < SCENE_WIDTH:
+            aim[0], aim[1] = row, col
+            if what == "打":
+                shoot(game, hunting, 1)   # 手指没那么准, 点在动物旁边一格也算
+    elif what == "开枪":
+        shoot(game, hunting, 0)
+
+
+def shoot(game, hunting, slack):
+    """朝准星开一枪 (用 1 发子弹): 准星在哪只动物身上 (旁边 slack 格以内也算), 就打中了它"""
+    s = game["supplies"]
+    if s["子弹"] == 0:
+        hunting["over"] = True
+        hunting["message"] = "没子弹了!"
+        return
+    s["子弹"] -= 1
+    hunting["shots"] += 1
+    row, col = hunting["aim"]
+    for animal in hunting["animals"]:
+        top, left, height, width = animal_box(animal)
+        if animal["dead"] is None and top - slack <= row < top + height + slack \
+                and left - slack <= col < left + width + slack:
+            animal["dead"] = 0
+            low, high = ANIMALS[animal["name"]]
+            meat = random.randint(low, high)
+            hunting["bag"].append((animal["name"], meat))
+            hunting["message"] = colored(f"砰! 打中了一只{animal['name']}, 有 {meat} 份肉!", "黄")
+            return
+    hunting["puffs"].append([row, col, 3])
+    hunting["message"] = "砰! 没打中。动物被枪声吓得跑得更快了。"
+    for animal in hunting["animals"]:
+        _, left, _, width = animal_box(animal)
+        if animal["dead"] is None and not animal["scared"] and abs(left + width / 2 - col) <= HUNT_SCARE_RANGE:
+            animal["speed"] *= HUNT_SCARE_SPEED
+            animal["scared"] = True
+
+
+def animal_art(animal, frame=0):
+    """这只动物的样子: 往右跑的时候左右翻过来 (每行先补齐到一样宽, 翻过来才对得齐)"""
+    art = ANIMAL_ART[animal["name"]][frame // 2 % 2]
+    if animal["speed"] < 0:
+        return art
+    width = max(len(line) for line in art)
+    return [line.ljust(width)[::-1].translate(MIRROR) for line in art]
+
+
+def animal_box(animal):
+    """动物占的地方: (最上面一行, 最左边一格, 几行高, 几格宽)"""
+    art = ANIMAL_ART[animal["name"]][0]
+    return animal["y"], round(animal["x"]), len(art), max(len(line) for line in art)
+
+
+def move_animals(hunting):
+    """过一帧: 动物往前跑 (偶尔上下拐一下), 跑出原野的就没了; 打死的留几帧再拿走; 动物不够多就从两边再跑进来一只"""
+    for animal in list(hunting["animals"]):
+        if animal["dead"] is not None:
+            animal["dead"] += 1
+            if animal["dead"] > 8:
+                hunting["animals"].remove(animal)
+            continue
+        animal["x"] += animal["speed"]
+        top, left, height, width = animal_box(animal)
+        if random.random() < 0.05:
+            animal["y"] = max(2, min(HUNT_HEIGHT - height, top + random.choice([-1, 1])))
+        if left > SCENE_WIDTH or left + width < 0:
+            hunting["animals"].remove(animal)
+    for puff in list(hunting["puffs"]):
+        puff[2] -= 1
+        if puff[2] <= 0:
+            hunting["puffs"].remove(puff)
+    alive = [animal for animal in hunting["animals"] if animal["dead"] is None]
+    # 一开始马上跑进来一只, 不用干等
+    if len(alive) < HUNT_MAX_ANIMALS and (not hunting["animals"] and hunting["frame"] < 3 or random.random() < HUNT_SPAWN):
+        names = list(HUNT_ANIMALS)
+        name = random.choices(names, [HUNT_ANIMALS[n][2] for n in names])[0]
+        low, high, _ = HUNT_ANIMALS[name]
+        art = ANIMAL_ART[name][0]
+        width = max(len(line) for line in art)
+        speed = random.uniform(low, high)
+        from_left = random.random() < 0.5
+        hunting["animals"].append({
+            "name": name, "x": -width if from_left else SCENE_WIDTH, "speed": speed if from_left else -speed,
+            "y": random.randint(2, HUNT_HEIGHT - len(art)), "scared": False, "dead": None})
+
+
+def hunt_ground(game):
+    """原野的背景: 天上的秃鹫、远处的山, 地上稀稀拉拉的枯草、石头和枯树。
+    用自己的随机数 (按第几天定), 画不画出来都不影响游戏里别的随机事"""
+    rng = random.Random(game["day"])
+    rows = [scene_slice(SCENE_SKY, rng.randrange(60)), scene_slice(SCENE_FAR, rng.randrange(60))]
+    for _ in range(HUNT_HEIGHT - 2):
+        rows.append("".join(rng.choice(".,'`") if rng.random() < 0.05 else " " for _ in range(SCENE_WIDTH)))
+    for thing in rng.sample([["\\|/", " | "], ["_.-._"], ["\\ /", " Y ", " | "], ["(@@)"]], 3):
+        y, x = rng.randint(2, HUNT_HEIGHT - len(thing)), rng.randrange(SCENE_WIDTH - 6)
+        for i, line in enumerate(thing):
+            rows[y + i] = rows[y + i][:x] + line + rows[y + i][x + len(line):]
+    return rows
+
+
+def hunt_rows(game, hunting):
+    """打猎的一帧画面: 上面一行是子弹、打到了什么、还剩几秒; 中间是原野; 下面是刚才打中了没有、怎么打"""
+    canvas = [[[" ", None] for _ in range(SCENE_WIDTH)] for _ in range(HUNT_HEIGHT)]
+    for y, line in enumerate(hunting["ground"]):
+        draw(canvas, y, 0, line, "灰")
+    for animal in hunting["animals"]:
+        art = animal_art(animal, hunting["frame"])
+        color = ANIMAL_COLORS[animal["name"]]
+        if animal["dead"] is not None:   # 打死的动物倒在那里, 眼睛变成 x
+            art, color = [line.replace("o", "x").replace("O", "x") for line in art], "灰"
+        for i, line in enumerate(art):
+            draw(canvas, animal["y"] + i, round(animal["x"]), line, color, solid=True)
+    for row, col, _ in hunting["puffs"]:
+        draw(canvas, row, col - 1, "*.*", "黄")
+    draw(canvas, hunting["aim"][0], hunting["aim"][1], "+", "青")
+    food = sum(meat for _, meat in hunting["bag"])
+    seconds = int(-(-hunting["left"] * HUNT_DELAY // 1))   # 往上取整
+    top = colored(f"打猎  子弹 {game['supplies']['子弹']}  打到 {len(hunting['bag'])} 只 ({food} 份肉)  还剩 {seconds} 秒", "黄", bold=True)
+    how = "点一下动物就开枪 (也可以用方向键和空格), 回车结束" if IN_BROWSER else "方向键 / WASD 移动准星 +, 空格开枪, 回车结束"
+    return [top] + canvas_lines(canvas) + [hunting["message"], colored(how, "灰")]
+
+
+def typing_hunt(game):
+    """以前的打猎 (不能玩瞄准射击的时候用): 看到词以后越快打出来, 打到的肉越多"""
     s = game["supplies"]
     if s["子弹"] < 5:
         print("\n打猎至少要 5 发子弹。")
@@ -1853,6 +2232,190 @@ def carry_meat(game, food):
         print(f"肉太多了, {you(game)}只扛得动 {most} 份, 剩下的只能留在原地。")
         food = most
     return add_supplies(game, "食物", food)
+
+
+def trade(game):
+    """每天的菜单里的「交易」: 花一天找人换东西。停在据点里人多, 一定找得到人; 在路上不一定碰得到"""
+    place = game["here"]
+    at_outpost = place in [name for name, _ in OUTPOSTS.values()]
+    if at_outpost:
+        print(f"\n{you(game)}在{place}里转了一天, 找人换东西……")
+    else:
+        print(f"\n{you(game)}在路边等了一天, 看有没有过路的人愿意换东西……")
+    pass_day(game)
+    if not game["party"]:
+        return
+    if not at_outpost and random.random() >= TRADE_CHANCE:
+        print("等了一整天, 连个人影都没看到。")
+        return
+    offer_trade(game, random.choice(TRADERS))
+
+
+def offer_trade(game, who, heading=""):
+    """who (比如「一个独眼的老猎人」) 拿出一样东西 (随机的), 换你车上的另一样, 换不换让玩家选。
+    他要的东西按商店的价钱算值多少 (TRADE_ASK), 只挑你车上够数的、换完车上还装得下的。heading 是印在最前面的标题"""
+    s = game["supplies"]
+    give = random.choice(list(TRADE_LOTS))
+    amount = random.randint(*TRADE_LOTS[give])
+    ask = random.randint(*TRADE_ASK)
+    merchant = skilled(game, "商人")
+    if merchant:
+        ask = ask * MERCHANT_TRADE_ASK // 100
+    value = amount * PRICES[give] * ask / 100   # 他想要的东西值多少钱
+    prices = {item: round(value / PRICES[item]) for item in PRICES if item != give}   # 换哪样要几个
+    print(f"{heading}{who}凑了过来, 拿出 {amount} {MEASURES[give]}{give}, 想跟{you(game)}换点东西。")
+    wants = [item for item, price in prices.items() if 1 <= price <= s[item]]
+    if not wants:
+        print(f"可是{you(game)}车上没有对方想要的东西, 换不成。")
+        return
+    load = load_of(game)
+    wants = [item for item in wants   # 换完车上要装得下 (本来就超重的旧存档, 换完不变得更重就行)
+             if load - prices[item] * WEIGHTS[item] + amount * WEIGHTS[give] <= max(CAR_CAPACITY, load)]
+    if not wants:
+        print(f"可惜车上太重了, 装不下 {amount} {MEASURES[give]}{give}, 换不了。")
+        return
+    want = random.choice(wants)
+    price = prices[want]
+    print(f"({you(game)}现在有 {s[want]} {MEASURES[want]}{want}、{s[give]} {MEASURES[give]}{give})")
+    if merchant:
+        print(f"商人{merchant}帮你讲价, 对方少要了两成。")
+    print(f"「{pick(game, '老兄', '妹子')}, 我这 {amount} {MEASURES[give]}{give}换你 {price} {MEASURES[want]}{want}, 换不换?」")
+    if ask_number("1. 换  2. 不换  ", 1, 2) == 2:
+        print(f"{you(game)}摇了摇头, 没有换。")
+        return
+    s[want] -= price
+    s[give] += amount
+    print(f"换好了。现在有 {s[give]} {MEASURES[give]}{give}、{s[want]} {MEASURES[want]}{want}。")
+    write_diary(game, f"跟{who}用 {price} {MEASURES[want]}{want}换了 {amount} {MEASURES[give]}{give}。")
+
+
+def drop(game):
+    """每天的菜单里的「丢东西」: 车太重了, 把用不上的东西扔掉, 给别的东西腾地方 (不花时间)。一样一样地丢, 选 0 不丢了"""
+    items = list(PRICES)
+    s = game["supplies"]
+    note = ""   # 刚才丢了什么 (写在下一个画面上, 不用再按一次回车)
+    while True:
+        new_screen()
+        people = len(game["party"]) * PERSON_WEIGHT
+        print("\n------ 丢东西 ------")
+        print(f"车上: {show_weight(game, load_of(game))} / {show_weight(game, CAR_CAPACITY)}, 其中人占了 {show_weight(game, people)}")
+        for i, item in enumerate(items, 1):
+            print(f"{i}. {item}  {s[item]} {MEASURES[item]}, 一共 {show_weight(game, s[item] * WEIGHTS[item])}")
+        print("0. 不丢了")
+        if note:
+            print(note)
+        choice = ask_number("丢什么? ", 0, len(items))
+        if choice == 0:
+            return
+        item = items[choice - 1]
+        if s[item] == 0:
+            note = f"车上没有{item}。"
+            continue
+        amount = ask_number(f"丢多少{item}? (最多 {s[item]}) ", 0, s[item])
+        note = ""
+        if amount:
+            s[item] -= amount
+            note = f"扔掉了 {amount} {MEASURES[item]}{item}, 车轻了 {show_weight(game, amount * WEIGHTS[item])}。"
+            write_diary(game, f"扔掉了 {amount} {MEASURES[item]}{item}。")
+
+
+def talk(game):
+    """每天的菜单里的「和人说话」(不花时间): 车停在一个地方的时候, 听那里的人说说前面的路况、天气、河有多深。
+    在同一个地方多问几次, 每次换一个人、说一件事; 都说完了从头再说"""
+    place = game["here"]
+    if not place:
+        print("\n四下里一个人影都没有。到了地标、据点这些地方, 再找人问问吧。")
+        return
+    outpost = place in [name for name, _ in OUTPOSTS.values()]
+    talkers = OUTPOST_TALKERS if outpost else ROAD_TALKERS
+    tips = random.Random(place).sample(TALK_TIPS, 2)   # 每个地方的人说的提醒不一样, 可同一个地方每次问都一样
+    lines = [line for line in (topic(game) for topic in TALK_TOPICS) if line] + tips
+    heard = game["talk"][1] if game["talk"][0] == place else 0   # 在这里已经听了几次
+    game["talk"] = [place, heard + 1]
+    print(f"\n{talkers[heard % len(talkers)]}说:")
+    print(f"「{lines[heard % len(lines)]}」")
+    if heard + 1 == len(lines):
+        print(colored(f"(这里的人知道的, 都跟{you(game)}说过了)", "灰"))
+
+
+def talk_river(game):
+    """前面最近的一条河: 还有多远、这几天大概多深、车开不开得过去、有没有渡船"""
+    for km, (place, _) in sorted(LANDMARKS.items()):
+        if km > game["distance"] and place in RIVERS:
+            river, _, _, fare = RIVERS[place]
+            depth = river_depth(game, place)
+            wade = "车直接开得过去" if depth <= wade_depth(game) else "车直接开过去, 发动机怕是要进水"
+            ferry = f"河边有人摆渡, 收 {fare} 块钱" if fare else "那里没有渡船, 只能自己想办法过"
+            return (f"再往西 {show_distance(game, km - game['distance'])}就是{river}。"
+                    f"这几天水大概有 {show_length(game, depth)}深, {wade}。{ferry}。")
+    return None
+
+
+def talk_weather(game):
+    """前面一段路 (下一个气候区, 后面没有了就是这里) 这个月多热、常不常下雨下雪"""
+    month = date_of(game)[0]
+    ahead = [km for km in CLIMATE if km > game["distance"]]
+    region, highs, wet, snow = CLIMATE[min(ahead)] if ahead else climate_here(game)
+    high, wet_days, snow_days = highs[month - 1], round(wet[month - 1]), round(snow[month - 1])
+    where = f"再往西到了{region}一带" if ahead else "这一带"
+    text = f"{where}, 这个时候白天大概 {show_temperature(game, high)}, 一个月里有 {wet_days} 天左右下雨下雪"
+    if snow_days:
+        text += f", 其中 {snow_days} 天是灰雪"
+    if high < 10:
+        return text + "。晚上冷得很, 冬衣每人一套, 吃的也要多带点。"
+    if high >= 32:
+        return text + "。热得要命, 水要多带。"
+    if wet_days >= 8:
+        return text + "。黑雨、酸雨多, 碰上了就躲在车里。"
+    return text + "。天气还算好走。"
+
+
+def talk_supplies(game):
+    """下一个能买东西的据点: 还有多远, 照现在的速度要开几天、用多少燃料"""
+    ahead = [(km, name) for km, (name, _) in sorted(OUTPOSTS.items()) if km > game["distance"]]
+    if not ahead:
+        return f"从这里到{DESTINATION}, 路上再也没有能买东西的地方了, 缺什么得自己想办法。"
+    km, name = ahead[0]
+    _, per_day, fuel, _ = PACES[game["pace"]]
+    days = -(-(km - game["distance"]) // per_day)   # 往上取整
+    return (f"下一个能买东西的地方是{name}, 离这里还有 {show_distance(game, km - game['distance'])}。"
+            f"照{you(game)}现在的速度, 得开 {days} 天上下, 燃料要 {days * fuel} 份。")
+
+
+def talk_hotspot(game):
+    """辐射热点: 在里面的话还要开多远才出得去; 不在的话前面的下一个还有多远"""
+    spot = hotspot_here(game)
+    if spot:
+        return (f"这一带辐射偏高, 还要再开 {show_distance(game, spot[1] - game['distance'])}才出得去。"
+                "能少在外面待就少待, 开快一点也能少受些辐射。")
+    spot = next_hotspot(game)
+    if spot:
+        return (f"再往西 {show_distance(game, spot[0] - game['distance'])}就到{spot[2]}了, 那一带辐射偏高。"
+                "排辐剂带上几支, 到了那里别在外面磨蹭。")
+    return None
+
+
+def talk_last_road(game):
+    """到达尔斯以前: 最后一段路的两种走法"""
+    if game["distance"] >= max(OUTPOSTS):
+        return None
+    return (f"到了{LAST_ROAD_FROM}, 最后一段路有两种走法: 扎木筏顺着哥伦比亚河漂下去, 不要钱也不用燃料, 可是急流里有礁石; "
+            f"或者交 {BARLOW_TOLL} 块钱过路费, 开车走绕过胡德山的巴洛路。")
+
+
+TALK_TOPICS = [talk_river, talk_weather, talk_supplies, talk_hotspot, talk_last_road]
+
+
+def make_room(game, name):
+    """有人想上车, 可车上东西太重, 再坐一个人就超载了: 问要不要先丢掉一些东西, 给他腾个座位。
+    坐得下 (本来就坐得下, 或者丢完东西坐得下了) 返回 True, 玩家不丢了返回 False"""
+    while not has_seat_for_one_more(game):
+        print(f"可惜车上东西太重, 再坐一个人就超载了 (每个人算 {show_weight(game, PERSON_WEIGHT)})。")
+        if ask_number(f"1. 先丢掉一些东西, 给{name}腾个座位  2. 算了  ", 1, 2) == 2:
+            return False
+        drop(game)
+        new_screen()
+    return True
 
 
 def take_medicine(game):
@@ -2022,8 +2585,10 @@ def offer_recruit(game, place, km=None):
         print(f"这里有个叫 {name} 的{job}也想往西走, 可惜你们的车已经坐满了。")
         return
     if not has_seat_for_one_more(game):
-        print(f"这里有个叫 {name} 的{job}也想往西走, 可惜车上东西太重, 再坐一个人就超载了。")
-        return
+        print(f"这里有个叫 {name} 的{job}也想往西走。")
+        if not make_room(game, name):
+            print(f"{name} 摇摇头, 留在了{place}。")
+            return
     brings = "和".join(f" {amount} 份{item}" for item, amount in RECRUIT_BRINGS.items())
     show_picture(PORTRAITS[job], words=["", "", f"{name} ({job})"])
     print(f"这里有个叫 {name} 的{job}也想往西走, 愿意跟{you(game)}一起, 还会带上自己的{brings}。")
@@ -2279,7 +2844,7 @@ def hit_rock(game):
     write_diary(game, "木筏在哥伦比亚河的急流里撞上了礁石。")
 
 
-# ========== 随机事件(想加新事件就照着写一个函数, 再放进 EVENTS) ==========
+# ========== 随机事件(想加新事件就照着写一个函数, 再放进 EVENTS (大事) 或者 SMALL_EVENTS (小事)) ==========
 # (辐射风暴以前是随机事件, 现在是天气, 写在 roll_weather 里)
 
 
@@ -2388,20 +2953,8 @@ def bad_water(game):
 
 
 def trader(game):
-    s = game["supplies"]
-    print(f"\n{title('流浪商人')}一个背着大包的流浪商人凑了过来:")
-    print(f"「{pick(game, '老兄', '妹子')}, 20 份食物换 8 份燃料, 换不换?」")
-    if s["食物"] < 20:
-        print("可惜你的食物不够, 换不了。")
-        return
-    if CAR_CAPACITY - load_of(game) + 20 * WEIGHTS["食物"] < 8 * WEIGHTS["燃料"]:   # 给出 20 份食物以后, 装不装得下 8 份燃料
-        print("可惜车上太重了, 装不下 8 份燃料, 换不了。")
-        return
-    if ask_number("1. 换  2. 不换  ", 1, 2) == 1:
-        s["食物"] -= 20
-        s["燃料"] += 8
-        print("交换成功。")
-        write_diary(game, "跟流浪商人用 20 份食物换了 8 份燃料。")
+    """路上碰到流浪商人, 跟每天的菜单里的「交易」一样换东西, 只是不用专门花一天"""
+    offer_trade(game, "一个背着大包的流浪商人", heading=f"\n{title('流浪商人')}")
 
 
 def stranger(game):
@@ -2415,8 +2968,8 @@ def stranger(game):
     if len(game["party"]) >= MAX_PARTY:
         print(f"可惜车上已经坐满了, 只能让 {name} 自己走。")
         return
-    if not has_seat_for_one_more(game):
-        print(f"可惜车上东西太重, 再坐一个人就超载了, 只能让 {name} 自己走。")
+    if not make_room(game, name):
+        print(f"只能让 {name} 自己走了。")
         return
     print("多一个人能多一份力气, 但每天也要多吃多喝。")
     if ask_number(f"1. 让{name}加入  2. 拒绝  ", 1, 2) == 2:
@@ -2484,18 +3037,143 @@ def radio_signal(game):
         raiders(game)
 
 
+def lost_way(game):
+    """迷路 (原版的 Lose trail): 白白耗掉几天"""
+    print(f"\n{title('迷路', '红')}旧公路的路牌早就倒了, 风沙又把路埋了一大半。{you(game)}绕来绕去, 迷了路……")
+    hunter = skilled(game, "猎人")
+    days = 1 if hunter else random.randint(*LOST_DAYS)
+    if hunter:
+        print(f"猎人{hunter}看着太阳和远处的山认出了方向, 只耽误了一天。")
+    for _ in range(days):
+        pass_day(game, traveling=True)
+        if not game["party"]:
+            return
+    print(f"花了 {days} 天, 才找回原来的路。")
+    write_diary(game, f"迷了路, 耽误了 {days} 天。")
+
+
+def car_fire(game):
+    """车着火 (原版的马车着火): 烧掉一样东西的一部分"""
+    s = game["supplies"]
+    print(f"\n{title('车着火了', '红')}发动机过热, 车厢里冒出了黑烟, 火苗窜了起来!")
+    mechanic = skilled(game, "机械师")
+    if mechanic:
+        print(f"机械师{mechanic}抓起灭火毯扑了上去, 火很快就灭了。")
+    burning = [item for item in s if s[item] > 0]
+    burnt = []
+    for item in random.sample(burning, min(1, len(burning))):
+        amount = s[item] * random.randint(*FIRE_BURN) // 100
+        if mechanic:
+            amount //= 2
+        if amount:
+            s[item] -= amount
+            burnt.append(f"{amount} {MEASURES[item]}{item}")
+    if burnt:
+        print(f"烧掉了{'、'.join(burnt)}。")
+        write_diary(game, f"车着火了, 烧掉了{'、'.join(burnt)}。")
+    else:
+        print("幸好没烧掉什么东西。")
+        write_diary(game, "车着火了, 幸好没烧掉什么东西。")
+
+
+def thief(game):
+    """夜里有小偷 (原版的 Thief comes during the night)"""
+    s = game["supplies"]
+    print(f"\n{title('小偷', '红')}夜里, 有人悄悄摸到了车边……")
+    veteran = skilled(game, "老兵")
+    if veteran:
+        print(f"老兵{veteran}在守夜, 朝天开了一枪, 小偷吓得什么都没拿就跑了。")
+        write_diary(game, f"夜里来了小偷, 被守夜的老兵{veteran}吓跑了。")
+        return
+    have = [item for item in s if s[item] > 0]
+    if not have:
+        print("小偷翻了半天, 什么都没找到, 骂骂咧咧地走了。")
+        return
+    item = random.choice(have)
+    amount = max(1, s[item] * random.randint(*THEFT) // 100)
+    s[item] -= amount
+    print(f"第二天早上一看, 少了 {amount} {MEASURES[item]}{item}!")
+    write_diary(game, f"夜里来了小偷, 偷走了 {amount} {MEASURES[item]}{item}。")
+
+
+def wild_food(game):
+    """找到吃的 (原版的找到野果): 废弃农场里自己长出来的庄稼"""
+    print(f"\n{title('找到吃的', '绿')}路边一个废弃的农场里, 地里自己长出了一片土豆和玉米。"
+          "盖革计数器只轻轻响了几下, 还能吃。")
+    food = add_supplies(game, "食物", random.randint(*WILD_FOOD))
+    if food:
+        print(f"{you(game)}挖了 {food} 份带上车。")
+        write_diary(game, f"在一个废弃的农场里挖到 {food} 份能吃的。")
+
+
+def clean_spring(game):
+    """找到干净的水"""
+    print(f"\n{title('干净的泉水', '绿')}岩缝里流出一股泉水, 盖革计数器一声都没响!")
+    water = add_supplies(game, "水", random.randint(*SPRING_WATER))
+    if water:
+        print(f"{you(game)}装了 {water} 份水。")
+        write_diary(game, f"找到一股干净的泉水, 装了 {water} 份水。")
+
+
+def abandoned_car(game):
+    """废弃的车 (原版的 Find an abandoned wagon): 车上还剩些东西, 也许还能拆个零件"""
+    print(f"\n{title('废弃的车')}路边翻倒着一辆被扔下的旧车, 车门还开着。")
+    if random.random() < 0.5:
+        parts = add_supplies(game, "零件", 1)
+        if parts:
+            print("从车上拆下了 1 个还能用的零件!")
+    find_supplies(game)
+    write_diary(game, "在路边一辆被扔下的旧车里找到了一些东西。")
+
+
+def rough_road(game):
+    """路太难走 (原版的 Rough trail): 慢慢开要多花一天, 硬冲过去可能把车颠坏"""
+    print(f"\n{title('路太难走')}前面一段公路被炸得坑坑洼洼, 还有一半塌进了沟里。")
+    if ask_number("1. 慢慢开过去 (多花 1 天)  2. 冲过去 (车可能会颠坏)  ", 1, 2) == 1:
+        pass_day(game, traveling=True)
+        if game["party"]:
+            print(f"{you(game)}一点一点地把车挪了过去, 花了一整天。")
+            write_diary(game, "一段烂路, 慢慢开了一整天。")
+        return
+    if random.random() < ROUGH_ROAD_BREAK:
+        print("哐当一声, 车颠坏了!")
+        breakdown(game)
+    else:
+        print("车颠得厉害, 好在冲过去了, 什么都没坏。")
+
+
+def snake_bite(game):
+    """被蛇咬 (原版的 Snakebite)"""
+    victim = random_member(game)
+    print(f"\n{title('毒蛇', '红')}{victim} 下车找柴火的时候, 被一条变异的响尾蛇咬了一口!")
+    write_diary(game, f"{victim} 被变异的响尾蛇咬了。")
+    doctor = skilled(game, "医生")
+    if doctor:
+        print(f"医生{doctor}马上把毒血挤了出来, 伤口包扎得很干净。")
+    hurt(game, victim, random.randint(*SNAKE_BITE))
+    if not doctor and victim in game["party"] and random.random() < sick_odds(game, INFECTION_CHANCE):
+        get_sick(game, victim, "伤口感染")
+
+
 EVENTS = [raiders, breakdown, warehouse,
           mutant_attack, radiation_sickness, bad_water, trader,
           stranger, minefield, radio_signal]
+SMALL_EVENTS = [lost_way, car_fire, thief, wild_food, clean_spring, abandoned_car, rough_road, snake_bite]
 
 
 def random_event(game, km):
-    """路上发生随机事件的机会跟开了多远有关: 每开 100 公里, 大约有 35% 的机会 (简单难度少一些, 困难多一些)。
+    """路上发生随机事件的机会跟开了多远有关: 每开 100 公里, 大约有 35% 的机会遇到大事 (简单难度少一些, 困难多一些);
+    没遇到大事的话, 还有 15% 的机会遇到小事 (有好有坏, 不分难度)。
     这样开得慢不会因为在路上的天数多, 就遇到更多倒霉事"""
+    if not game["party"]:
+        return
     chance = EVENT_CHANCE_PER_100KM * km / 100 * DIFFICULTIES[game["difficulty"]][2] / 100
-    if game["party"] and random.random() < chance:
+    if random.random() < chance:
         event_screen()
         random.choice(EVENTS)(game)
+    elif random.random() < SMALL_EVENT_CHANCE_PER_100KM * km / 100:
+        event_screen()
+        random.choice(SMALL_EVENTS)(game)
 
 
 # ========== 结局 ==========
@@ -3342,6 +4020,19 @@ WIPEOUT_ART = picture(r"""
 """)
 
 # 每个人的样子 (5 行, 不超过 11 个字宽): 主角按性别, 据点里的人按职业, 路上遇到的陌生人都是一个样子
+# 打猎时的动物: 头朝左 (往右跑的时候左右翻过来), 每种两帧, 腿一前一后地动
+ANIMAL_ART = {
+    "变异野兔": [["(\\_/)", "(oOo)", ' " " '],
+                 ["(\\_/)", "(oOo)", '"   "']],
+    "双头鹿": [[" Y  Y", "<o><o>____", "   (______)", "    |\\  |\\"],
+               [" Y  Y", "<o><o>____", "   (______)", "    /|  /|"]],
+    "辐射野猪": [["   _______", "<(o       )~", "  ||    ||"],
+                 ["   _______", "<(o       )~", "  //    //"]],
+}
+ANIMAL_COLORS = {"变异野兔": None, "双头鹿": "黄", "辐射野猪": "红"}
+MIRROR = str.maketrans("()<>/\\[]{}", ")(><\\/][}{")   # 画左右翻过来的时候, 这些字也要换成反方向的
+
+
 PORTRAITS = {
     "男": picture(r"""
    ,,,,,
@@ -3583,11 +4274,13 @@ def show_help():
   继续前进  开车赶路, 要用燃料。开得越快越费燃料, 人也越累。
             车会像原版那样一直往前开, 路上出了事会说一声, 看完接着开; 到了地方就停下来。
             想停下来休息、用药、看看情况, 就按回车 (网页版点一下屏幕)
-  休息一天  躲在车里养伤养病, 不怕风吹雨打
+  休息      躲在车里养伤养病, 不怕风吹雨打。一次最多 {MAX_REST_DAYS} 天, 出了事就停下来
   搜刮废墟  也许能找到物资, 也可能碰上危险
-  打猎      屏幕上出现英文词就飞快打出来, 越快肉越多 (记得先切换成英文输入法)
+  打猎      方向键移动准星, 空格开枪 (网页版用鼠标或手指点), 打中动物就有肉
+  交易      花一天找人换东西, 换不换你定 (在路上不一定碰得到人)
   用药      药品治病治伤, 排辐剂排辐射, 自己选给谁用
-  还可以改变口粮和速度、查看队伍、看旅行日记、存档。这几样不花时间
+  和人说话  车停在地标、据点时, 听那里的人说说前面的路况、天气、河有多深
+  还可以改变口粮和速度、丢东西、查看队伍、看旅行日记、存档, 这几样都不花时间
 """)
     new_screen()   # 一页放不下, 分成三页
     print(f"""
@@ -3668,8 +4361,8 @@ def main():
 
 def play(game):
     """玩一局, 直到走到终点、全军覆没, 或者存档后回到主菜单"""
-    actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: take_medicine,
-               6: change_ration, 7: change_pace, 8: show_party, 9: show_diary}
+    actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: trade, 6: take_medicine,
+               7: change_ration, 8: change_pace, 9: drop, 10: talk, 11: show_party, 12: show_diary}
     ending = None   # 走到终点时是哪个结局 (全军覆没就没有, 也不算分)
     play_music("赶路")
 
@@ -3692,10 +4385,12 @@ def play(game):
             show_dashboard(game)
         else:
             show_status(game)
-        print("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 用药")
-        print("6. 改变口粮  7. 改变速度  8. 查看队伍  9. 旅行日记  10. 存档")
-        choice = ask_number("你要做什么? ", 1, 10)
-        if choice == 10:
+        # 第一行要花时间, 第二行不花时间, 第三行看看、存档
+        print("1. 继续前进  2. 休息  3. 搜刮废墟  4. 打猎  5. 交易")
+        print("6. 用药  7. 改变口粮  8. 改变速度  9. 丢东西  10. 和人说话")
+        print("11. 查看队伍  12. 旅行日记  13. 存档")
+        choice = ask_number("你要做什么? ", 1, 13)
+        if choice == 13:
             save_game(game)
             if ask_number("1. 继续玩  2. 回到主菜单  ", 1, 2) == 2:
                 return

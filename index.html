@@ -237,8 +237,10 @@
   /* 手机上: 不用打字的时候把输入框藏起来, 留地方给按钮 */
   @media (max-width: 899px), (max-height: 599px) {
     #app[data-kind="choices"] #bar, #app[data-kind="enter"] #bar,
-    #app[data-kind="driving"] #bar, #app[data-kind="busy"] #bar { display: none; }
+    #app[data-kind="driving"] #bar, #app[data-kind="busy"] #bar, #app[data-kind="hunting"] #bar { display: none; }
   }
+  /* 打猎的时候: 在屏幕上点一下就是开枪, 手指在屏幕上划也不要滚动网页 */
+  #app.hunting #screen { touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; }
 
   /* ---------- 状态 ---------- */
   #status h3 { margin: 12px 0 4px; font-size: 13px; color: var(--yellow); }
@@ -540,15 +542,20 @@
     screenBox.scrollTop = screenBox.scrollHeight;   // 字变了大小, 还是停在最下面
     // 告诉游戏这个字号下一屏放得下几列、几行字 (见 run_in_browser.py 的 screen_size)
     const used = parseFloat(screenBox.style.fontSize);
+    charWidth = letter * used;
+    lineHeight = LINE_HEIGHT * used;
     screenColumns = Math.floor(width / (letter * used) + 0.01);
     screenRows = Math.floor(height / (LINE_HEIGHT * used) + 0.01);
     tellScreenSize();
   }
 
-  // 跟后台线程 (游戏) 共用的几个数字: [0] 车自己往前开的时候, 玩家要不要停下来 (1 是要); [1] [2] 一屏放得下几列、几行字
+  // 跟后台线程 (游戏) 共用的几个数字: [0] 车自己往前开的时候, 玩家要不要停下来 (1 是要); [1] [2] 一屏放得下几列、几行字;
+  // [3] 打猎时网页一共记了几件事 (点了哪里、按了什么键), [8] 开始的 32 个格子轮流放这些事 (见下面的「打猎」)
   let flags = null;
   let screenColumns = 0;
   let screenRows = 0;
+  let charWidth = 0;    // 屏幕上一个英文字有多宽 (像素), 打猎时算点在了第几格
+  let lineHeight = 0;   // 一行有多高 (像素)
   function tellScreenSize() {
     if (!flags) return;
     Atomics.store(flags, 1, screenColumns);
@@ -680,11 +687,65 @@
   // ---------- 一直往前开的时候: 点「停下来」、点一下屏幕或者按回车, 叫车停下来 ----------
   // 车自己往前开的时候, 游戏 (Python) 没在等回答。这时候在共用内存里记一笔, 游戏每画一帧会看一眼 (见 run_in_browser.py 的 stop_pressed)
   function askToStop() {
-    if (!waiting && flags) Atomics.store(flags, 0, 1);
+    if (!waiting && !hunting && flags) Atomics.store(flags, 0, 1);
   }
   screenBox.addEventListener("pointerdown", askToStop);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") askToStop();
+  });
+
+  // ---------- 打猎: 点一下屏幕上的动物就开枪 (电脑上也可以用方向键移动准星、空格开枪) ----------
+  // 打猎的时候游戏 (Python) 一帧一帧地画, 不等回答。这里把玩家点了哪里、按了什么键记在共用内存里,
+  // 游戏每画一帧来拿一次 (见 worker.js 的 huntEvents、run_in_browser.py 的 hunt_keys)。
+  // 每件事是一个数字: 种类 x 1000000 + 第几行 x 1000 + 第几格。种类: 1 上 2 下 3 左 4 右 5 开枪 6 结束 7 点了这一格 8 鼠标移到这一格
+  const HUNT_COUNT = 3;   // flags[3] 是一共记了几件事
+  const HUNT_FIRST = 8;   // flags[8] 开始的格子放这些事, 放满了从头再来
+  const HUNT_SLOTS = 32;
+  const HUNT_KEYS = { ArrowUp: 1, ArrowDown: 2, ArrowLeft: 3, ArrowRight: 4, w: 1, s: 2, a: 3, d: 4, " ": 5, Enter: 6, q: 6, Escape: 6 };
+  let hunting = false;
+  let aimedAt = "";   // 鼠标上一次在哪一格 (一样就不用再记)
+
+  function tellHunt(kind, r = 0, c = 0) {
+    if (!flags || flags.length < HUNT_FIRST + HUNT_SLOTS) return;
+    const count = Atomics.load(flags, HUNT_COUNT);
+    Atomics.store(flags, HUNT_FIRST + count % HUNT_SLOTS, kind * 1000000 + r * 1000 + c);
+    Atomics.store(flags, HUNT_COUNT, count + 1);
+  }
+
+  function cellAt(event) {   // 点在屏幕的第几行、第几格
+    const box = screenBox.getBoundingClientRect();
+    const style = getComputedStyle(screenBox);
+    const x = event.clientX - box.left - parseFloat(style.paddingLeft);
+    const y = event.clientY - box.top - parseFloat(style.paddingTop) + screenBox.scrollTop;
+    return [Math.max(0, Math.floor(y / lineHeight)), Math.max(0, Math.floor(x / charWidth))];
+  }
+
+  function setHunting(on) {
+    hunting = on;
+    aimedAt = "";
+    app.classList.toggle("hunting", on);
+    renderActions();
+  }
+
+  screenBox.addEventListener("pointerdown", (event) => {
+    if (!hunting) return;
+    event.preventDefault();
+    const [r, c] = cellAt(event);
+    tellHunt(7, r, c);
+  });
+  screenBox.addEventListener("pointermove", (event) => {
+    if (!hunting || event.pointerType === "touch") return;   // 手指在屏幕上划不算瞄准, 点了才算
+    const [r, c] = cellAt(event);
+    if (`${r},${c}` === aimedAt) return;
+    aimedAt = `${r},${c}`;
+    tellHunt(8, r, c);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (!hunting) return;
+    const kind = HUNT_KEYS[event.key.length === 1 ? event.key.toLowerCase() : event.key];
+    if (!kind) return;
+    event.preventDefault();   // 方向键、空格不要滚动网页
+    tellHunt(kind);
   });
 
   // ---------- 图形界面: 按钮、状态、地图、旅行日记 ----------
@@ -698,8 +759,8 @@
 
   const COLOR_CLASS = { "红": "c31", "绿": "c32", "黄": "c33", "蓝": "c34", "紫": "c35", "青": "c36", "灰": "c90" };
   const ICONS = {
-    "继续前进": "🚗", "休息一天": "⛺", "搜刮废墟": "🔍", "打猎": "🎯", "用药": "💊",
-    "改变口粮": "🍲", "改变速度": "⏩", "查看队伍": "👥", "旅行日记": "📖", "存档": "💾",
+    "继续前进": "🚗", "休息": "⛺", "搜刮废墟": "🔍", "打猎": "🎯", "交易": "🤝", "用药": "💊",
+    "改变口粮": "🍲", "改变速度": "⏩", "丢东西": "🗑️", "和人说话": "💬", "查看队伍": "👥", "旅行日记": "📖", "存档": "💾",
     "开始新游戏": "🆕", "继续游戏": "▶️", "游戏说明": "❓", "最高分": "🏆", "退出游戏": "🚪",
   };
 
@@ -738,7 +799,7 @@
 
   // 「操作」面板: 能选的变成按钮
   function renderActions() {
-    const kind = waiting ? (question ? question.kind : "text") : driving ? "driving" : "busy";
+    const kind = waiting ? (question ? question.kind : "text") : hunting ? "hunting" : driving ? "driving" : "busy";
     app.dataset.kind = kind;
     if (kind === "busy") {   // 游戏正在忙 (放动画、写字): 按钮先留着, 只是点不了, 免得画面一闪一闪
       for (const button of choicesBox.querySelectorAll("button")) button.disabled = true;
@@ -786,6 +847,9 @@
     } else if (kind === "driving") {
       askBox.textContent = "车在一直往前开……";
       makeButton("big stop", "■ 停下来", askToStop);
+    } else if (kind === "hunting") {
+      askBox.textContent = "点一下屏幕上的动物就开枪";
+      makeButton("big stop", "■ 结束打猎", () => tellHunt(6));
     }
   }
 
@@ -1012,7 +1076,7 @@
     memory = new SharedArrayBuffer(8 + 1024);
     control = new Int32Array(memory, 0, 2);
     letters = new Uint8Array(memory, 8);
-    const flagsMemory = new SharedArrayBuffer(12);
+    const flagsMemory = new SharedArrayBuffer(4 * (HUNT_FIRST + HUNT_SLOTS));
     flags = new Int32Array(flagsMemory);
     tellScreenSize();
 
@@ -1026,6 +1090,7 @@
       else if (message.type === "scores") writeStored(SCORES_KEY, message.text);
       else if (message.type === "music") playMusic(JSON.parse(message.text));
       else if (message.type === "loop") startLoop(message.text);
+      else if (message.type === "hunt") setHunting(message.on);
       else if (message.type === "status") answer.placeholder = message.text || "等游戏开始……";
       else if (message.type === "finished") {
         write("\n—— 游戏已经关掉了。刷新网页可以重新开始。——\n");
@@ -1035,6 +1100,7 @@
         waiting = false;
         question = null;
         driving = false;
+        hunting = false;
         renderActions();
       }
     };

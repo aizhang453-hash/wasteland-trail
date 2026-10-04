@@ -9,6 +9,7 @@
 - 主菜单的小动画: 等玩家输入时 Python 停着动不了, 所以把一整圈画面交给网页, 网页自己一帧一帧地换, 玩家一回答就停。
 - 一直往前开的时候怎么停车: 网页里读不了键盘, 玩家点屏幕或者按回车时网页记一笔, 游戏每画一帧来问一下。
 - 屏幕多大: 网页按屏幕算好字号, 记下一屏放得下几列、几行字, 游戏看够不够用大画面。
+- 打猎: 网页把玩家点了屏幕的哪一格、按了什么键记下来, 游戏每画一帧来拿一次。
 - 图形界面: 按钮、状态面板、地图、旅行日记都是网页画的。游戏每次问问题以前, 这里把「现在的状态」和「在问什么、能选什么」
   整理好 (见 gui.py) 交给网页; 车自己往前开的时候, 每天也交一次状态。游戏印出来的字照样显示在网页中间的屏幕上。
 """
@@ -75,6 +76,28 @@ def stop_pressed(seconds):
     time.sleep(seconds)
     ask = getattr(js, "stopRequested", None)   # 浏览器里还留着旧版的 worker.js 时没有它, 那就只在出事的时候停
     return bool(ask and ask())
+
+
+HUNT_EVENTS = {1: "上", 2: "下", 3: "左", 4: "右", 5: "开枪", 6: "走", 7: "打", 8: "瞄"}
+
+
+def hunt_keys(hunting):
+    """打猎时, 上一帧以后玩家在网页上做了什么: 点了屏幕的哪一格 ("打")、鼠标移到哪一格 ("瞄")、按了什么键"""
+    events = []
+    for code in (js.huntEvents() or "").split(","):
+        if code:
+            kind, rest = divmod(int(code), 1000000)
+            row, col = divmod(rest, 1000)
+            name = HUNT_EVENTS.get(kind)
+            if name:
+                events.append((name, row, col) if name in ("打", "瞄") else (name,))
+    return events
+
+
+def hunt_screen(on):
+    """打猎开始、结束时告诉网页: 打猎的时候, 点屏幕就是开枪"""
+    sys.stdout.flush()
+    js.huntToPage(on)
 
 
 def screen_size():
@@ -182,6 +205,10 @@ game_file.start_playing = start_playing
 game_file.show_title_loop = show_title_loop
 game_file.stop_pressed = stop_pressed
 game_file.screen_size = screen_size
+if getattr(js, "huntEvents", None):   # 浏览器里还留着旧版的 worker.js 时没有它, 打猎就还是以前打字的样子
+    game_file.HUNT_IN_BROWSER = True
+    game_file.hunt_keys = hunt_keys
+    game_file.hunt_screen = hunt_screen
 time.sleep = lambda seconds: js.sleepMs(int(seconds * 1000))
 
 try:

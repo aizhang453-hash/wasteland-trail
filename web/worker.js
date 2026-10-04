@@ -7,7 +7,9 @@ import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyod
 
 let control;   // 共用内存的前两个数字: [0] 是「玩家输入好了没有」(1 是好了), [1] 是输入的字有几个字节
 let letters;   // 共用内存后面的部分: 玩家输入的字 (UTF-8)
-let flags;     // 另一小块共用内存: [0] 车自己往前开的时候, 玩家点了屏幕或者按了回车 (1 是要停下来); [1] [2] 网页一屏放得下几列、几行字
+let flags;     // 另一小块共用内存: [0] 车自己往前开的时候, 玩家点了屏幕或者按了回车 (1 是要停下来); [1] [2] 网页一屏放得下几列、几行字;
+               // [3] 打猎时网页一共记了几件事, [8] 开始的 32 个格子轮流放这些事 (见 index.html 的「打猎」)
+let huntRead = 0;   // 打猎的事, 已经交给游戏几件了
 const sleeper = new Int32Array(new SharedArrayBuffer(4));   // 专门用来「停一会儿」的一小块内存
 
 self.onmessage = async (event) => {
@@ -38,6 +40,16 @@ self.onmessage = async (event) => {
   self.stopRequested = () => (flags ? Atomics.exchange(flags, 0, 0) : 0);   // 看一眼要不要停, 顺便清掉
   self.guiToPage = (text) => postMessage({ type: "gui", text: text });   // 图形界面: 状态、在问什么、车在不在开
   self.screenSize = () => (flags ? `${Atomics.load(flags, 1)},${Atomics.load(flags, 2)}` : "");   // 「几列,几行」
+  self.huntToPage = (on) => postMessage({ type: "hunt", on: Boolean(on) });   // 打猎开始了 / 结束了
+  if (flags && flags.length >= 8 + 32) {   // 网页还是旧版的话, 记不了打猎的事, 就不给游戏这个 (游戏会用以前打字的打猎)
+    self.huntEvents = () => {   // 上次以后网页记下的打猎的事 (点了哪里、按了什么键), 用逗号隔开
+      const count = Atomics.load(flags, 3);
+      if (count - huntRead > 32) huntRead = count - 32;   // 太多了, 最早的已经被盖掉了
+      const events = [];
+      for (; huntRead < count; huntRead++) events.push(Atomics.load(flags, 8 + huntRead % 32));
+      return events.join(",");
+    };
+  }
 
   postMessage({ type: "status", text: "正在载入游戏……" });
   const game = await (await fetch("../wasteland_trail.py", { cache: "no-cache" })).text();

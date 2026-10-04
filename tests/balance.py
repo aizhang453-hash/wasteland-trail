@@ -26,6 +26,10 @@ RECRUIT = True
 DIFFICULTY = 2
 # 坐木筏过急流时, 会规划的玩家选错水道的机会 (真人要在几秒内选, 难免手忙脚乱)
 RAPID_MISTAKES = 0.2
+# 打猎时, 会规划的玩家每一帧最多按几下方向键 (按住不放, 键盘大约每秒重复 20 下), 准星对上了动物有多大机会马上开枪
+HUNT_MOVES = 2
+HUNT_TRIGGER = 0.5
+HUNT_HASTE = 0.05   # 准星还差几格就急着开枪 (多半打空) 的机会, 每一帧
 
 
 def planner(game_box, screen, month):
@@ -98,6 +102,8 @@ def planner(game_box, screen, month):
             return str(lanes.index(want) + 1)
         if "你怎么办" in prompt:                  # 劫匪就开枪, 雷区就慢慢开过去
             return "2"
+        if "先丢掉一些东西" in prompt:             # 车太重, 想上车的人坐不下: 不丢东西 (就让他留下)
+            return "2"
         if "不用了" in prompt:                    # 据点里愿意跟着走的人: 带上
             return "1" if RECRUIT else "2"
         if "换  2" in prompt or "加入" in prompt or "要花 2 天" in prompt:
@@ -110,11 +116,11 @@ def planner(game_box, screen, month):
             sick = [name for name in party if name in game["sick"]]
             if s["药品"] and (sick or min(party.values()) < 50):   # 先治生病受伤的人里最虚弱的
                 medicine[:] = ["1", min(sick or party, key=party.get)]
-                return "5"
+                return "6"
             most_rads = max(party, key=lambda name: game["rads"].get(name, 0))
             if s["排辐剂"] and game["rads"].get(most_rads, 0) >= 50:
                 medicine[:] = ["2", most_rads]
-                return "5"
+                return "6"
             if s["食物"] < 40 and s["子弹"] >= 25:
                 return "4"
             if s["食物"] and s["水"] and (game["weather"] in ["酸雨", "辐射风暴"] or min(party.values()) < 35):
@@ -124,6 +130,45 @@ def planner(game_box, screen, month):
             return "1"
         return "1"
     return answer
+
+
+def hunter_bot(game_box):
+    """会规划的玩家打猎: 准星一下一下地挪向最近的那只动物 (跟真人在终端里按方向键一样), 对上了就开枪 (手不总是那么快);
+    肉已经多得扛不动了就回去"""
+    def keys(hunting):
+        game = game_box[0]
+        most = len(game["party"]) * w.CARRY_PER_PERSON // w.WEIGHTS["食物"]
+        if sum(meat for _, meat in hunting["bag"]) >= most:
+            return [("走",)]
+        alive = [animal for animal in hunting["animals"] if animal["dead"] is None]
+        if not alive:
+            return []
+        row, col = hunting["aim"]
+
+        def middle(animal):
+            top, left, height, width = w.animal_box(animal)
+            return top + height // 2, left + width // 2
+
+        target = min(alive, key=lambda animal: abs(middle(animal)[0] - row) * 2 + abs(middle(animal)[1] - col))
+        top, left, height, width = w.animal_box(target)
+        events = []
+        for _ in range(HUNT_MOVES):
+            want_row, want_col = middle(target)
+            if top <= row < top + height and left <= col < left + width:
+                break
+            if row != want_row:
+                events.append(("下",) if row < want_row else ("上",))
+                row += 1 if row < want_row else -1
+            elif col != want_col:
+                step = w.HUNT_STEP if col < want_col else -w.HUNT_STEP
+                events.append(("右",) if step > 0 else ("左",))
+                col += step
+        on_target = top <= row < top + height and left <= col < left + width
+        near = abs(middle(target)[1] - col) <= 6 and abs(middle(target)[0] - row) <= 2
+        if on_target and random.random() < HUNT_TRIGGER or not on_target and near and random.random() < HUNT_HASTE:
+            events.append(("开枪",))
+        return events
+    return keys
 
 
 def ferry_money(game):
@@ -156,6 +201,7 @@ def play_one(seed, month=None):
 
     with mock.patch.object(w, "new_game", new_game), \
             mock.patch("builtins.input", planner(game_box, screen, month)), \
+            mock.patch.multiple(w, can_aim=lambda: True, hunt_keys=hunter_bot(game_box)), \
             redirect_stdout(screen):
         w.main()
     return screen.getvalue()

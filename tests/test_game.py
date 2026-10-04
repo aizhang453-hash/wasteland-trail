@@ -44,9 +44,14 @@ def random_player(rng):
         if "卖多少" in prompt:
             most = int(prompt.split("最多")[1].split(")")[0])
             return str(rng.randint(0, most))
+        if "丢什么" in prompt:          # 丢一两样就不丢了 (不然一直在丢东西的画面里出不来)
+            return rng.choice(["0", "0", str(rng.randint(1, 8))])
+        if "丢多少" in prompt:          # 丢东西大多只丢一点
+            most = int(prompt.split("最多")[1].split(")")[0])
+            return str(rng.randint(0, most // 4))
         if "你要做什么" in prompt:      # 一半时候往前开, 这样才能走得远、遇到更多事
             played[0] = True
-            return rng.choice(["1", "1", "1", "1", "1", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
+            return rng.choice(["1", "1", "1", "1", "1", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"])
         if "继续玩" in prompt:          # 存档后大多数时候接着玩
             return "2" if rng.random() < 0.05 else "1"
         if rng.random() < 0.1:
@@ -764,8 +769,8 @@ class GameTest(unittest.TestCase):
     def test_status_shows_hotspot(self):
         """状态栏: 快到辐射热点时提前提醒; 在热点里写着每天受多少辐射、还要开多远才能出去"""
         start, end, name, outdoor, indoor, _ = w.HOTSPOTS[0]
-        inside = (f"正在{name}, 在外面每天受 {outdoor} 点辐射, 躲在车里 {indoor} 点。"
-                  f"还要开 {end - start - 40} 公里才能离开")
+        inside = (f"正在{name}, 还要开 {end - start - 40} 公里才能离开\n"
+                  f"          在外面每天受 {outdoor} 点辐射, 躲在车里 {indoor} 点")
         for distance, words in [(start - 100, f"再开 100 公里就到{name}, 那一带辐射偏高"),
                                 (start + 40, inside), (start - w.HOTSPOT_WARNING - 1, None)]:
             with self.subTest(distance=distance):
@@ -778,6 +783,24 @@ class GameTest(unittest.TestCase):
                     self.assertIn(words, screen.getvalue())
                 else:
                     self.assertNotIn("辐射热点", screen.getvalue())
+
+    def test_status_fits_small_terminal(self):
+        """状态栏每一行都放得下 80 列宽的终端 (东西很多、四个人都病了、在辐射热点里、选英里也一样), 不会折行把画面挤乱"""
+        for unit in ["公里", "英里"]:
+            for distance in [0, 510, 950, 1950, 2861]:
+                with self.subTest(unit=unit, distance=distance):
+                    game = new_test_game()
+                    game.update(unit=unit, distance=distance, day=199, money=9999, seeds=True, weather="灰色暴风雪")
+                    game["party"] = {"小明": 100, "杰克": 40, "玛莎": 10, "埃迪2": 5}
+                    game["jobs"] = {"杰克": "老兵", "玛莎": "医生", "埃迪2": "机械师"}
+                    game["sick"] = {"埃迪2": ["伤口感染", 3], "杰克": ["过度劳累", 2]}
+                    game["rads"] = {name: 100 for name in game["party"]}
+                    for item in game["supplies"]:
+                        game["supplies"][item] = 9999
+                    with redirect_stdout(io.StringIO()) as screen:
+                        w.show_status(game)
+                    for line in re.sub(r"\x1b\[[\d;]*m", "", screen.getvalue()).split("\n"):
+                        self.assertLess(w.text_width(line), 80, line)
 
     def test_old_save_does_not_warn_about_passed_hotspots(self):
         """以前版本的存档里没记辐射热点: 读档以后, 已经开进去或者开过去的热点不会再提醒一遍"""
@@ -996,10 +1019,17 @@ class GameTest(unittest.TestCase):
         game["party"] = {"小明": 100}
         game["supplies"]["燃料"] = 115   # 920 + 70 = 990 公斤, 再坐一个人就超载
         screen = io.StringIO()
-        with real_car(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(screen):
-            w.offer_recruit(game, "卡尼堡")
+        with real_car(), mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(screen):
+            w.offer_recruit(game, "卡尼堡")   # 不丢东西
         self.assertEqual(list(game["party"]), ["小明"])
         self.assertIn("超载", screen.getvalue())
+        # 先丢 5 份燃料 (40 公斤) 还不够, 再丢 3 份: 车上 926 公斤, 杰克 (70 公斤) 就坐得下了
+        answers = iter(["1", "3", "5", "0", "1", "3", "3", "0", "1"])   # 丢东西: 燃料 5 份, 不丢了; 还是坐不下, 再丢 3 份; 让杰克加入
+        with real_car(), mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
+            w.offer_recruit(game, "卡尼堡")
+        self.assertEqual(list(game["party"]), ["小明", "杰克"])
+        self.assertEqual(game["supplies"]["燃料"], 107)
+        self.assertEqual(game["supplies"]["食物"], 8)   # 他带的 60 份口粮只装得下 4 公斤
 
     def test_recruit_brings_only_what_fits(self):
         game = w.new_game()
@@ -1011,16 +1041,400 @@ class GameTest(unittest.TestCase):
         self.assertEqual(game["supplies"]["食物"], 60)   # 30 公斤, 装得下
         self.assertEqual(game["supplies"]["水"], 15)     # 只剩 30 公斤, 只装得下 15 份水
 
-    def test_trader_needs_room(self):
+    # ---------- 交易 ----------
+
+    def fuel_offer(self):
+        """交易时对方一定拿出 8 份燃料, 按商店的价钱要回一样多 (值 32 块)"""
+        return mock.patch.multiple(w, TRADE_LOTS={"燃料": (8, 8)}, TRADE_ASK=(100, 100))
+
+    def only(self, game, **supplies):
+        """车上只有这几样东西, 别的都是 0 (对方只能要车上有的东西)"""
+        for item in game["supplies"]:
+            game["supplies"][item] = supplies.get(item, 0)
+
+    def test_trade(self):
+        """对方拿出 8 份燃料, 要值一样多的食物 (32 份): 不换什么都不变; 换了就换了, 记进日记"""
+        game = new_test_game()
+        self.only(game, 食物=100)
+        with self.fuel_offer(), mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()):
+            w.offer_trade(game, "一个独眼的老猎人")
+        self.assertEqual((game["supplies"]["食物"], game["supplies"]["燃料"]), (100, 0))
+        screen = io.StringIO()
+        with self.fuel_offer(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(screen):
+            w.offer_trade(game, "一个独眼的老猎人")
+        self.assertIn("我这 8 份燃料换你 32 份食物, 换不换?", screen.getvalue())
+        self.assertEqual((game["supplies"]["食物"], game["supplies"]["燃料"]), (68, 8))
+        self.assertIn("跟一个独眼的老猎人用 32 份食物换了 8 份燃料。", game["diary"][-1])
+
+    def test_merchant_trades_cheaper(self):
+        """有商人帮着讲价, 对方少要两成: 32 份食物变成 26 份"""
+        game = self.with_job("商人")
+        self.only(game, 食物=100)
+        screen = io.StringIO()
+        with self.fuel_offer(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(screen):
+            w.offer_trade(game, "一个独眼的老猎人")
+        self.assertIn("商人B帮你讲价", screen.getvalue())
+        self.assertEqual((game["supplies"]["食物"], game["supplies"]["燃料"]), (74, 8))
+
+    def test_trade_needs_what_they_want(self):
+        """车上的东西不够对方要的, 就换不成"""
+        game = new_test_game()
+        self.only(game, 食物=31)
+        screen = io.StringIO()
+        with self.fuel_offer(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(screen):
+            w.offer_trade(game, "一个独眼的老猎人")
+        self.assertIn("没有对方想要的东西", screen.getvalue())
+        self.assertEqual((game["supplies"]["食物"], game["supplies"]["燃料"]), (31, 0))
+
+    def test_trade_needs_room(self):
         game = w.new_game()
         game["party"] = {"A": 100}
-        game["supplies"]["食物"] = 20
-        game["supplies"]["燃料"] = 110   # 70 + 10 + 880 = 960 公斤, 换掉食物也装不下 64 公斤燃料
+        self.only(game, 食物=40, 燃料=110)   # 70 + 20 + 880 = 970 公斤, 换掉 16 公斤食物也装不下 64 公斤燃料
         screen = io.StringIO()
-        with real_car(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(screen):
+        with real_car(), self.fuel_offer(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(screen):
             w.trader(game)
+        self.assertIn("【流浪商人】", screen.getvalue())
         self.assertIn("装不下 8 份燃料", screen.getvalue())
         self.assertEqual(game["supplies"]["燃料"], 110)
+
+    def test_trades_always_add_up(self):
+        """乱换 2000 次 (车上的东西也是乱的): 换完不会有负数, 车也不会超重; 流浪商人不花时间"""
+        rng = random.Random(1)
+        for seed in range(2000):
+            random.seed(seed)
+            game = w.new_game()
+            game["party"] = {name: 100 for name in "ABCD"[:rng.randint(1, 4)]}
+            for item in game["supplies"]:
+                game["supplies"][item] = rng.choice([0, 0, 1, 2, 5, 30, 100])
+            if w.load_of(game) > REAL_CAPACITY:
+                continue
+            with real_car(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(io.StringIO()):
+                w.trader(game)
+            with self.subTest(seed=seed):
+                self.assertTrue(all(amount >= 0 for amount in game["supplies"].values()))
+                self.assertLessEqual(w.load_of(game), REAL_CAPACITY)
+                self.assertEqual(game["day"], 1)
+
+    def test_trade_takes_a_day(self):
+        """每天的菜单里的「交易」花一天: 在路上可能碰不到人, 停在据点里一定碰得到"""
+        game = new_test_game()
+        game["here"] = None
+        with mock.patch.object(w, "TRADE_CHANCE", 0), redirect_stdout(io.StringIO()) as screen:
+            w.trade(game)
+        self.assertEqual(game["day"], 2)
+        self.assertIn("连个人影都没看到", screen.getvalue())
+        game["here"] = "卡尼堡"
+        with mock.patch.object(w, "TRADE_CHANCE", 0), mock.patch("builtins.input", lambda p="": "2"), \
+                redirect_stdout(io.StringIO()) as screen:
+            w.trade(game)
+        self.assertEqual(game["day"], 3)
+        self.assertIn("在卡尼堡里转了一天", screen.getvalue())
+        self.assertIn("凑了过来", screen.getvalue())
+
+    def test_menu_trade(self):
+        """每天的菜单里选 5 是交易"""
+        game = new_test_game()
+        answers = iter(["5", "13", "2"])   # 交易, 存档, 回到主菜单
+        with mock.patch.object(w, "TRADE_CHANCE", 0), mock.patch("builtins.input", lambda p="": next(answers)), \
+                redirect_stdout(io.StringIO()) as screen:
+            w.play(game)
+        self.assertIn("5. 交易", screen.getvalue())
+        self.assertIn("连个人影都没看到", screen.getvalue())
+
+    # ---------- 打猎小游戏 ----------
+
+    def test_typing_hunt_when_cannot_aim(self):
+        """跑测试、网页还是旧版的时候不能实时读键盘, 打猎还是以前打字的样子; 设置里关掉了也是"""
+        self.assertFalse(w.can_aim())
+        with mock.patch.object(w, "can_clear_screen", lambda: True), mock.patch.object(w, "HUNT_IN_BROWSER", True):
+            self.assertTrue(w.can_aim())
+            with mock.patch.object(w, "HUNT_GAME", False):
+                self.assertFalse(w.can_aim())
+
+    def test_aim_hunt(self):
+        """会瞄准的电脑玩家打猎: 打得到动物, 开一枪用一发子弹, 肉记进日记, 花一天"""
+        from tests.balance import hunter_bot
+        game = new_test_game()
+        game["supplies"]["食物"] = 0
+        game["supplies"]["子弹"] = 50
+        with mock.patch.multiple(w, can_aim=lambda: True, hunt_keys=hunter_bot([game])), \
+                mock.patch("builtins.input", lambda p="": ""), redirect_stdout(io.StringIO()) as screen:
+            w.hunt(game)
+        text = screen.getvalue()
+        shots = int(re.search(r"这次开了 (\d+) 枪", text)[1])
+        self.assertIn("打到了", text)
+        self.assertEqual(game["supplies"]["子弹"], 50 - shots)
+        self.assertEqual(game["day"], 2)
+        self.assertIn("打猎打到", game["diary"][-1])
+        self.assertLessEqual(game["supplies"]["食物"], 4 * 40)   # 4 个人最多扛 160 份 (过了一天还吃掉一些)
+
+    def hunting_with_deer(self, game, x=20, y=5):
+        """一场打猎, 原野上只有一只往左跑的双头鹿, 在第 y 行第 x 格 (11 格宽、4 行高)"""
+        hunting = w.new_hunt(game)
+        hunting["animals"].append({"name": "双头鹿", "x": x, "y": y, "speed": -0.6, "scared": False, "dead": None})
+        return hunting
+
+    def test_shoot(self):
+        """准星在动物身上就打中; 没打中会吓得旁边的动物跑快; 网页上点在动物旁边一格也算; 子弹打光就结束"""
+        game = new_test_game()
+        game["supplies"]["子弹"] = 3
+        hunting = self.hunting_with_deer(game)
+        hunting["aim"] = [6, 25]
+        w.hunt_event(game, hunting, ("开枪",))
+        self.assertEqual([name for name, _ in hunting["bag"]], ["双头鹿"])
+        self.assertEqual((game["supplies"]["子弹"], hunting["shots"]), (2, 1))
+        self.assertIn("打中了一只双头鹿", hunting["message"])
+
+        hunting = self.hunting_with_deer(game)
+        hunting["aim"] = [6, 34]   # 鹿在 20~30 格, 准星在旁边
+        w.hunt_event(game, hunting, ("开枪",))
+        self.assertEqual(hunting["bag"], [])
+        self.assertEqual(hunting["animals"][0]["speed"], -0.6 * w.HUNT_SCARE_SPEED)
+        self.assertEqual(game["supplies"]["子弹"], 1)
+
+        hunting = self.hunting_with_deer(game)
+        w.hunt_event(game, hunting, ("打", 1 + 9, 31))   # 网页: 点在屏幕第 10 行 (原野第 9 行, 鹿的下面一行), 鹿右边一格
+        self.assertEqual(len(hunting["bag"]), 1)
+        self.assertEqual(hunting["aim"], [9, 31])
+        self.assertEqual(game["supplies"]["子弹"], 0)
+
+        w.hunt_event(game, hunting, ("开枪",))
+        self.assertTrue(hunting["over"])
+        self.assertIn("没子弹了", hunting["message"])
+
+    def test_aim_moves(self):
+        """方向键移动准星 (左右一次 2 格), 不会移出原野; 网页上鼠标移到哪准星就在哪; 回车结束"""
+        game = new_test_game()
+        hunting = w.new_hunt(game)
+        hunting["aim"] = [0, 1]
+        for key in ["上", "左", "右", "右", "下"]:
+            w.hunt_event(game, hunting, (key,))
+        self.assertEqual(hunting["aim"], [1, 4])
+        w.hunt_event(game, hunting, ("瞄", 3, 50))
+        self.assertEqual(hunting["aim"], [2, 50])
+        w.hunt_event(game, hunting, ("瞄", 40, 50))   # 点在原野外面不算
+        self.assertEqual(hunting["aim"], [2, 50])
+        self.assertEqual(game["supplies"]["子弹"], 100)
+        w.hunt_event(game, hunting, ("走",))
+        self.assertTrue(hunting["over"])
+
+    def test_terminal_hunt_keys(self):
+        """终端里: 方向键是 ESC [ A 这样三个字; W A S D 也能移动, 空格开枪, 回车或 Q 结束"""
+        self.assertEqual(w.split_keys("\x1b[A \x1b[Dq\x1bOC"), ["上", " ", "左", "q", "右"])
+        events = [w.HUNT_KEYS.get(key.lower()) for key in "wasd \rQ"]
+        self.assertEqual(events, ["上", "左", "下", "右", "开枪", "走", "走"])
+
+    def test_animals_and_hunt_screen(self):
+        """动物往右跑时左右翻过来, 两帧一样大; 画面一共 15 行, 原野只用英文字符, 不超过画面宽"""
+        for name, frames in w.ANIMAL_ART.items():
+            with self.subTest(name=name):
+                self.assertEqual({len(frame) for frame in frames}, {len(frames[0])})
+                self.assertTrue(all(line.isascii() for frame in frames for line in frame))
+                left = {"name": name, "speed": -1, "x": 0, "y": 2}
+                right = {"name": name, "speed": 1, "x": 0, "y": 2}
+                self.assertEqual(w.animal_box(left), w.animal_box(right))
+        right = {"name": "辐射野猪", "speed": 1}
+        self.assertEqual(w.animal_art(right)[1], "~(       o)>")
+        game = new_test_game()
+        hunting = self.hunting_with_deer(game)
+        rows = [re.sub(r"\x1b\[[\d;]*m", "", row) for row in w.hunt_rows(game, hunting)]
+        self.assertEqual(len(rows), 1 + w.HUNT_HEIGHT + 2)
+        field = rows[1:1 + w.HUNT_HEIGHT]
+        self.assertTrue(all(row.isascii() and len(row) == w.SCENE_WIDTH for row in field))
+        self.assertIn("<o><o>", field[6])
+        self.assertTrue(all(w.text_width(row) <= w.SCENE_WIDTH for row in rows))
+
+    def test_hunt_ends_in_time(self):
+        """没人按键, 打猎到时间就结束; 动物会跑进来, 也会跑出去"""
+        game = new_test_game()
+        seen = set()
+
+        def nobody(hunting):
+            seen.update(animal["name"] for animal in hunting["animals"])
+            return []
+        random.seed(1)
+        with mock.patch.object(w, "hunt_keys", nobody), redirect_stdout(io.StringIO()):
+            hunting = w.hunt_game(game)
+        self.assertEqual(hunting["left"], 0)
+        self.assertEqual(hunting["bag"], [])
+        self.assertIn("时间到了", hunting["message"])
+        self.assertTrue(seen)
+
+    # ---------- 路上的小事 ----------
+
+    def test_small_events(self):
+        """新的路上的事 (小事): 每一件都能发生, 不会出错; 有的东西变多, 有的变少"""
+        for event in w.SMALL_EVENTS:
+            for seed in range(20):
+                with self.subTest(event=event.__name__, seed=seed):
+                    random.seed(seed)
+                    game = new_test_game()
+                    with mock.patch("builtins.input", lambda p="": str(seed % 2 + 1)), redirect_stdout(io.StringIO()):
+                        event(game)
+                    self.assertTrue(all(amount >= 0 for amount in game["supplies"].values()))
+                    self.assertTrue(all(0 <= health <= 100 for health in game["party"].values()))
+
+    def test_small_events_effects(self):
+        game = new_test_game()
+        with no_new_diseases(), redirect_stdout(io.StringIO()):
+            w.lost_way(game)
+        self.assertIn(game["day"], [2, 3])
+        hunter = self.with_job("猎人")
+        with no_new_diseases(), redirect_stdout(io.StringIO()):
+            w.lost_way(hunter)
+        self.assertEqual(hunter["day"], 2)   # 猎人认得路, 只耽误一天
+
+        game = new_test_game()
+        with redirect_stdout(io.StringIO()):
+            w.wild_food(game)
+            w.clean_spring(game)
+        self.assertTrue(110 <= game["supplies"]["食物"] <= 130 and 120 <= game["supplies"]["水"] <= 140)
+
+        game = new_test_game()
+        with redirect_stdout(io.StringIO()):
+            w.car_fire(game)
+        self.assertEqual(sorted(game["supplies"].values())[0] in range(70, 91), True)   # 一样东西烧掉 10%~30%
+
+        veteran = self.with_job("老兵")
+        with redirect_stdout(io.StringIO()) as screen:
+            w.thief(veteran)
+        self.assertEqual(set(veteran["supplies"].values()), {100})
+        self.assertIn("吓得", screen.getvalue())
+
+        game = new_test_game()
+        with mock.patch.object(w, "ROUGH_ROAD_BREAK", 1), mock.patch("builtins.input", lambda p="": "2"), \
+                redirect_stdout(io.StringIO()):
+            w.rough_road(game)   # 冲过去, 车颠坏了, 用掉一个零件
+        self.assertEqual(game["supplies"]["零件"], 99)
+
+        doctor = self.with_job("医生")
+        with mock.patch.object(w, "random_member", lambda game: "A"), mock.patch.object(w, "INFECTION_CHANCE", 1), \
+                redirect_stdout(io.StringIO()):
+            w.snake_bite(doctor)
+        self.assertLess(doctor["party"]["A"], 100)
+        self.assertNotIn("A", doctor["sick"])   # 医生处理过的伤口不会感染
+
+    def test_small_events_on_the_road(self):
+        """没遇到大事的话, 还可能遇到小事"""
+        game = new_test_game()
+        happened = []
+        with mock.patch.multiple(w, EVENTS=[lambda game: happened.append("大")], SMALL_EVENTS=[lambda game: happened.append("小")]), \
+                mock.patch.object(w.random, "random", lambda: 0.1):
+            w.random_event(game, 10)   # 开 10 公里: 大事 3.5%, 小事 1.5%, 都没碰上
+            w.random_event(game, 100)  # 开 100 公里: 大事 35% 没碰上 (0.1 < 0.35 碰上了)
+        self.assertEqual(happened, ["大"])
+        with mock.patch.multiple(w, EVENTS=[lambda game: happened.append("大")], SMALL_EVENTS=[lambda game: happened.append("小")]), \
+                mock.patch.object(w.random, "random", lambda: 0.1), mock.patch.object(w, "EVENT_CHANCE_PER_100KM", 0):
+            w.random_event(game, 100)  # 没有大事, 小事 15% 碰上了
+        self.assertEqual(happened, ["大", "小"])
+
+    # ---------- 和人说话 ----------
+
+    def test_talk(self):
+        """停在一个地方才有人说话; 每次换一个人、说一件事 (前面的河多深、天气、下一个据点、辐射热点、最后一段路、提醒)"""
+        game = new_test_game()
+        game["here"] = None
+        with redirect_stdout(io.StringIO()) as screen:
+            w.talk(game)
+        self.assertIn("一个人影都没有", screen.getvalue())
+
+        game["here"], game["distance"] = "卡尼堡", 510
+        with redirect_stdout(io.StringIO()) as screen:
+            for _ in range(8):
+                w.talk(game)
+        text = screen.getvalue()
+        for words in ["就是北普拉特河", "收 10 块钱", "再往西到了高平原一带", "下一个能买东西的地方是拉勒米堡",
+                      "就到导弹发射井一带了", "到了达尔斯", "一个在据点门口晒太阳的老人说", "据点里修车的师傅说"]:
+            self.assertIn(words, text)
+        self.assertEqual(text.count("都跟你们说过了"), 1)   # 一共 7 件事, 第 7 次说完提醒一下
+        self.assertEqual(game["talk"], ["卡尼堡", 8])
+
+        game["here"], game["distance"] = "达尔斯", 2861   # 过了达尔斯: 没有据点、没有河, 也不用再说最后一段路
+        with redirect_stdout(io.StringIO()) as screen:
+            for _ in range(4):
+                w.talk(game)
+        text = screen.getvalue()
+        self.assertIn("再也没有能买东西的地方", text)
+        self.assertNotIn("扎木筏", text)
+        self.assertEqual(game["talk"], ["达尔斯", 4])   # 换了地方, 从头说起
+
+    def test_talk_on_menu(self):
+        game = new_test_game()
+        answers = iter(["10", "13", "2"])   # 和人说话, 存档, 回到主菜单
+        with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()) as screen:
+            w.play(game)
+        self.assertIn("10. 和人说话", screen.getvalue())
+        self.assertIn("在这里歇脚的一个旅人说", screen.getvalue())   # 刚出发, 停在独立城
+
+    # ---------- 休息几天、丢东西 ----------
+
+    def test_rest_days(self):
+        """问休息几天: 选 3 就过 3 天, 每天多恢复 8 点健康; 选 0 就不休息"""
+        game = new_test_game()
+        game["party"] = {"A": 50, "B": 50}
+        with no_new_diseases(), mock.patch.multiple(w, roll_weather=lambda g: None), \
+                mock.patch("builtins.input", lambda p="": "3"), redirect_stdout(io.StringIO()) as screen:
+            w.rest(game)
+        self.assertEqual(game["day"], 4)
+        self.assertEqual(game["party"], {"A": 50 + 3 * (8 + 1), "B": 50 + 3 * (8 + 1)})   # 普通口粮每天还有 1 点
+        self.assertIn("4月3日 晴, 休息了一天。", screen.getvalue())
+        self.assertIn("休息了 3 天", screen.getvalue())
+        with mock.patch("builtins.input", lambda p="": "0"), redirect_stdout(io.StringIO()):
+            w.rest(game)
+        self.assertEqual(game["day"], 4)
+
+    def test_rest_stops_when_something_happens(self):
+        """休息到一半有人病倒、有人去世, 或者吃的头一回不够了, 就不接着休息了"""
+        game = new_test_game()
+        sick_on_day_2 = lambda g, *args: g["day"] == 2 and w.get_sick(g, "A", "痢疾")
+        with mock.patch.object(w, "catch_diseases", sick_on_day_2), redirect_stdout(io.StringIO()) as screen:
+            w.rest_days(game, 9)
+        self.assertEqual(game["day"], 3)
+        self.assertIn("先不休息了 (休息了 2 天)", screen.getvalue())
+
+        game = new_test_game()
+        game["supplies"]["食物"] = 8 * 2 + 3   # 4 个人每天吃 8 份, 第 3 天就不够了
+        with no_new_diseases(), mock.patch.object(w, "roll_weather", lambda g: None), redirect_stdout(io.StringIO()):
+            w.rest_days(game, 9)
+        self.assertEqual(game["day"], 4)
+
+        game = new_test_game()
+        game["party"]["D"] = 1
+        game["supplies"]["食物"] = 0   # D 第一天就饿死了
+        with no_new_diseases(), redirect_stdout(io.StringIO()) as screen:
+            w.rest_days(game, 9)
+        self.assertNotIn("D", game["party"])
+        self.assertEqual(game["day"], 2)
+
+        game = new_test_game()
+        game["supplies"]["食物"] = 0   # 一开始就在挨饿: 不算新出的事, 照样休息完
+        game["short"] = ["食物"]
+        with no_new_diseases(), redirect_stdout(io.StringIO()):
+            w.rest_days(game, 3)
+        self.assertEqual(game["day"], 4)
+
+    def test_drop(self):
+        """丢东西: 不花时间, 车变轻了, 记进日记; 没有的东西丢不了"""
+        game = w.new_game()
+        game["party"] = {"A": 100}
+        game["supplies"]["燃料"] = 50
+        answers = iter(["3", "20", "6", "0"])   # 丢 20 份燃料, 再选药品 (没有), 不丢了
+        with real_car(), mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()) as screen:
+            w.drop(game)
+        self.assertEqual(game["supplies"]["燃料"], 30)
+        self.assertEqual(w.load_of(game), 70000 + 30 * 8000)
+        self.assertEqual(game["day"], 1)
+        self.assertIn("扔掉了 20 份燃料, 车轻了 160 公斤", screen.getvalue())
+        self.assertIn("车上没有药品", screen.getvalue())
+        self.assertIn("扔掉了 20 份燃料。", game["diary"][-1])
+
+    def test_full_car_suggests_dropping(self):
+        game = w.new_game()
+        game["party"] = {"A": 100}
+        game["supplies"]["燃料"] = 116   # 70 + 928 = 998 公斤, 只装得下 4 份食物
+        with real_car(), redirect_stdout(io.StringIO()) as screen:
+            w.add_supplies(game, "食物", 10)
+        self.assertIn("可以把用不上的东西丢掉", screen.getvalue())
 
     def test_status_shows_load(self):
         game = w.new_game()
@@ -1058,7 +1472,7 @@ class GameTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             w.save_game(game)
         # 主菜单选继续游戏, 休息一天 (饿死了), 按回车回到主菜单, 退出
-        answers = iter(["2", "2", "", "5"])
+        answers = iter(["2", "2", "1", "", "5"])
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.main()
         self.assertFalse(os.path.exists(w.SAVE_FILE))
@@ -1221,7 +1635,7 @@ class GameTest(unittest.TestCase):
         game["money"] = 100
         screen = io.StringIO()
         with mock.patch("builtins.input", lambda p="": "4" if "怎么过河" in p else "2"), \
-                mock.patch.multiple(w, FERRY_WAIT=0, EVENT_CHANCE_PER_100KM=0), redirect_stdout(screen):
+                mock.patch.multiple(w, FERRY_WAIT=0, EVENT_CHANCE_PER_100KM=0, SMALL_EVENT_CHANCE_PER_100KM=0), redirect_stdout(screen):
             w.travel(game)
             w.check_places(game)
         self.assertEqual(screen.getvalue().count("来到了【堪萨斯河渡口】"), 1)
@@ -2007,10 +2421,10 @@ class GameTest(unittest.TestCase):
     def test_save_then_back_to_menu_then_continue(self):
         """开新游戏, 存档后回到主菜单, 主菜单上能看到存档, 选继续游戏能接着玩"""
         new_game = ["1", "3", "1", "小明", "1", "5", "0"]   # 新游戏: 困难、公里、名字、男、5 月、不买东西
-        text = self.run_main(new_game + ["10", "2", "5"])   # 存档, 回到主菜单, 退出
+        text = self.run_main(new_game + ["13", "2", "5"])   # 存档, 回到主菜单, 退出
         self.assertTrue(os.path.exists(w.SAVE_FILE))
         self.assertIn("继续游戏 (困难, 5月1日, 已走 0 公里)", text)
-        text = self.run_main(["2", "10", "2", "5"])   # 继续游戏, 马上又存档, 回到主菜单, 退出
+        text = self.run_main(["2", "13", "2", "5"])   # 继续游戏, 马上又存档, 回到主菜单, 退出
         self.assertIn("==== 5月1日 (第 1 天)", text)
 
     def test_new_game_over_old_save_asks_first(self):
@@ -2023,7 +2437,7 @@ class GameTest(unittest.TestCase):
         self.assertIn("开始新游戏会把它删掉", text)
         self.assertEqual(w.load_game()["leader"], "老存档")
         new_game = ["1", "1", "2", "1", "小明", "1", "5", "0"]   # 开始新游戏、确定、普通、公里、名字、男、5 月、不买东西
-        self.run_main(new_game + ["10", "2", "5"])
+        self.run_main(new_game + ["13", "2", "5"])
         self.assertEqual(w.load_game()["leader"], "小明")
 
     # ---------- 换画面和一直往前开 ----------
@@ -2095,7 +2509,7 @@ class GameTest(unittest.TestCase):
 
     def quiet_road(self):
         """一路上不出事、不生病、天气一直晴"""
-        return mock.patch.multiple(w, EVENT_CHANCE_PER_100KM=0, catch_diseases=lambda *args: None,
+        return mock.patch.multiple(w, EVENT_CHANCE_PER_100KM=0, SMALL_EVENT_CHANCE_PER_100KM=0, catch_diseases=lambda *args: None,
                                    DIRTY_WATER_CHANCE=0, roll_weather=lambda game: None)
 
     def test_keep_driving_until_player_presses(self):
@@ -2270,7 +2684,7 @@ class GameTest(unittest.TestCase):
     def test_menu_dashboard(self):
         """窗口很大: 每天的菜单上面是大画面, 车停着"""
         game = new_test_game()
-        with self.screens(wide=True), mock.patch("builtins.input", lambda p="": "10" if "做什么" in p else "2"), \
+        with self.screens(wide=True), mock.patch("builtins.input", lambda p="": "13" if "做什么" in p else "2"), \
                 redirect_stdout(io.StringIO()) as screen:
             w.play(game)
         text = screen.getvalue()
@@ -2290,7 +2704,7 @@ class GameTest(unittest.TestCase):
                 w.drive_one_day(game)
         self.assertEqual(game["here"], "灰洞")
         with redirect_stdout(io.StringIO()):
-            w.rest(game)
+            w.rest_days(game, 1)
         self.assertEqual(game["here"], "灰洞")   # 在这里休息, 还是停在这里
         for distance, here in [(0, w.START_PLACE), (300, None)]:
             old = new_test_game()
