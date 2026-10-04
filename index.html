@@ -23,7 +23,7 @@
     height: 100dvh;
     font-family: Consolas, Menlo, "DejaVu Sans Mono", "Noto Sans Mono CJK SC", "Microsoft YaHei Mono", monospace;
   }
-  /* 屏幕: 字号跟着屏幕宽度变, 让 60 个字宽的字符画在手机上也放得下 */
+  /* 屏幕: 字号由下面的 fitFont() 跟着屏幕大小算 (这里的是脚本还没跑时先用的) */
   #screen {
     flex: 1;
     margin: 0;
@@ -224,6 +224,51 @@
     screenBox.innerHTML = parts.join("");
     screenBox.scrollTop = screenBox.scrollHeight;
   }
+
+  // ---------- 字号: 跟着屏幕大小变 ----------
+  // 手机、平板、电脑的屏幕大小差很多, 字号固定的话, 大屏幕上字很小、右边空一大片。所以按屏幕算字号:
+  // 一行要放得下最宽的字符画 (60 个英文字), 一屏至少要看得到 SCREEN_ROWS 行 (状态栏、菜单加上动画), 在这个范围里尽量大
+  const SCREEN_COLUMNS = 61;   // 多留一格, 免得刚好卡在边上
+  const SCREEN_ROWS = 28;
+  const MIN_FONT = 8;
+  const MAX_FONT = 28;
+  const LINE_HEIGHT = 1.3;     // 跟上面 #screen 的 line-height 一样
+
+  function letterWidth() {
+    // 量一下这个字体里一个英文字有多宽 (字号 100 像素时), 不同电脑上的等宽字体宽窄不太一样
+    const probe = document.createElement("span");
+    probe.textContent = "M".repeat(50);
+    probe.style.cssText = "position:absolute; visibility:hidden; white-space:pre; font-size:100px; font-family:inherit";
+    screenBox.appendChild(probe);
+    const width = probe.getBoundingClientRect().width / 50 / 100;
+    probe.remove();
+    return width || 0.6;
+  }
+
+  function fitFont() {
+    const style = getComputedStyle(screenBox);
+    const width = screenBox.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    const height = screenBox.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    const byWidth = width / (SCREEN_COLUMNS * letterWidth());
+    const byHeight = height / (SCREEN_ROWS * LINE_HEIGHT);
+    const size = Math.max(MIN_FONT, Math.min(MAX_FONT, byWidth, byHeight));
+    screenBox.style.fontSize = size.toFixed(1) + "px";
+    screenBox.scrollTop = screenBox.scrollHeight;   // 字变了大小, 还是停在最下面
+  }
+
+  // 屏幕那块地方一变大小就重新算: 转屏幕、拉大拉小窗口, 还有下面的数字键摆好以后屏幕变矮了, 都会变
+  let fitScheduled = false;
+  function fitSoon() {
+    if (fitScheduled) return;
+    fitScheduled = true;
+    requestAnimationFrame(() => {
+      fitScheduled = false;
+      fitFont();
+    });
+  }
+  if (window.ResizeObserver) new ResizeObserver(fitSoon).observe(screenBox);
+  else window.addEventListener("resize", fitSoon);
+  fitFont();
 
   // ---------- 存档和最高分: 存在浏览器的 localStorage 里 (隐私模式下可能用不了, 那就不存) ----------
   function readStored(key) {
