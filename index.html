@@ -8,8 +8,16 @@
 <style>
   :root {
     --bg: #071007;
+    --panel: #0a160c;
     --fg: #3dff6e;
     --dim: #1d7a36;
+    --faint: #12351b;
+    --red: #ff6b6b;
+    --yellow: #ffd75f;
+    --blue: #6cb6ff;
+    --purple: #ff7af0;
+    --cyan: #5ff5ff;
+    --gray: #5f8f6a;
   }
   html, body {
     margin: 0;
@@ -18,12 +26,119 @@
     color: var(--fg);
   }
   body {
+    font-family: Consolas, Menlo, "DejaVu Sans Mono", "Noto Sans Mono CJK SC", "Microsoft YaHei Mono", monospace;
+    font-size: 15px;
+  }
+
+  /* ---------- 整个网页怎么摆 (像原版 CD 版): 电脑、平板横着拿是三栏; 手机、平板竖着拿是上下两块, 下面一块用标签切换 ---------- */
+  #app {
+    display: grid;
+    height: 100dvh;
+    box-sizing: border-box;
+    padding: 6px;
+    gap: 6px;
+    /* 手机、平板竖着拿: 上面是屏幕, 下面一块面板 (操作 / 状态 / 地图 / 日记, 用最下面的标签换) */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) 46% auto;
+    grid-template-areas: "title" "view" "panel" "tabs";
+  }
+  #titlebar { grid-area: title; }
+  #view { grid-area: view; }
+  #actionsbox, #statusbox, #mapbox, #logbox { grid-area: panel; }
+  #tabs { grid-area: tabs; }
+  /* 只显示选中的那个标签的面板 */
+  #app:not([data-tab="actions"]) #actionsbox,
+  #app:not([data-tab="status"]) #statusbox,
+  #app:not([data-tab="map"]) #mapbox,
+  #app:not([data-tab="log"]) #logbox { display: none; }
+
+  /* 平板竖着拿: 下面一半, 左边一直是按钮, 右边用标签换状态、地图、日记 */
+  @media (min-width: 600px) and (max-width: 899px) and (orientation: portrait) {
+    #app {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) 42% auto;
+      grid-template-areas: "title title" "view view" "actions panel" "actions tabs";
+    }
+    #actionsbox { grid-area: actions; }
+    #app[data-tab] #actionsbox { display: flex; }
+    #app[data-tab="actions"] #statusbox { display: flex; }   /* 有问题要回答 (切到了「操作」) 的时候, 右边还是看状态 */
+    #tabs { grid-template-columns: repeat(3, 1fr); }
+    #tabs button[data-tab="actions"] { display: none; }
+  }
+
+  /* 手机横着拿: 左边屏幕, 右边面板 (按钮小一点) */
+  @media (orientation: landscape) and (max-height: 560px) {
+    #app {
+      grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-areas: "title title" "view panel" "view tabs";
+      padding: 4px;
+      gap: 4px;
+    }
+    .panel > h2 { display: none; }
+    #choices { grid-template-columns: repeat(auto-fill, minmax(7em, 1fr)); gap: 4px; }
+    #choices button.choice { min-height: 32px; padding: 3px 6px; font-size: 13px; gap: 5px; }
+    #choices .icon { display: none; }
+    #tabs button { padding: 5px 0; font-size: 13px; }
+  }
+
+  /* 电脑、平板横着拿: 左边按钮, 中间屏幕和地图, 右边状态和旅行日记 */
+  @media (min-width: 900px) and (min-height: 600px) {
+    #app {
+      grid-template-columns: minmax(160px, 200px) minmax(0, 1fr) minmax(250px, 310px);
+      grid-template-rows: auto minmax(0, 1fr) minmax(170px, 30%);
+      grid-template-areas: "title title title" "actions view status" "actions map log";
+    }
+    #actionsbox { grid-area: actions; }
+    #statusbox { grid-area: status; }
+    #mapbox { grid-area: map; }
+    #logbox { grid-area: log; }
+    #app[data-tab] #actionsbox, #app[data-tab] #statusbox, #app[data-tab] #mapbox, #app[data-tab] #logbox { display: flex; }
+    #app #tabs { display: none; }
+  }
+
+  .panel {
     display: flex;
     flex-direction: column;
-    height: 100dvh;
-    font-family: Consolas, Menlo, "DejaVu Sans Mono", "Noto Sans Mono CJK SC", "Microsoft YaHei Mono", monospace;
+    min-height: 0;
+    border: 1px solid var(--dim);
+    border-radius: 6px;
+    background: var(--panel);
+    overflow: hidden;
   }
-  /* 屏幕: 字号由下面的 fitFont() 跟着屏幕大小算 (这里的是脚本还没跑时先用的) */
+  .panel > h2 {
+    margin: 0;
+    padding: 4px 10px;
+    font-size: 13px;
+    font-weight: bold;
+    color: var(--yellow);
+    border-bottom: 1px solid var(--faint);
+  }
+  .panel > .inside {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px 10px;
+  }
+
+  #titlebar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 4px;
+  }
+  #titlebar .name { color: var(--yellow); font-weight: bold; letter-spacing: 2px; }
+  #titlebar #where { flex: 1; min-width: 0; color: var(--gray); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 屏幕: 游戏印出来的字 (动画、发生的事、商店……)。字号由下面的 fitFont() 跟着屏幕大小算 */
+  #view {
+    display: flex;
+    min-height: 0;
+    border: 1px solid var(--dim);
+    border-radius: 6px;
+    background: #050c05;
+    overflow: hidden;
+  }
   #screen {
     flex: 1;
     margin: 0;
@@ -32,27 +147,82 @@
     font-family: inherit;   /* <pre> 自己带着默认字体, 要让它用上面 body 设的字体 */
     white-space: pre-wrap;
     word-break: break-all;
-    font-size: clamp(8px, calc((100vw - 24px) / 37), 16px);
+    font-size: 12px;
     line-height: 1.3;
     text-shadow: 0 0 4px rgba(61, 255, 110, 0.45);
   }
-  /* 游戏里的颜色 (Python 那边用 ANSI 控制字符上色, 下面的 write() 把它们换成这些样式) */
-  .c31 { color: #ff6b6b; text-shadow: 0 0 4px rgba(255, 107, 107, 0.45); }   /* 红 */
-  .c32 { color: #3dff6e; }                                                   /* 绿 */
-  .c33 { color: #ffd75f; text-shadow: 0 0 4px rgba(255, 215, 95, 0.45); }    /* 黄 */
-  .c34 { color: #6cb6ff; text-shadow: 0 0 4px rgba(108, 182, 255, 0.45); }   /* 蓝 */
-  .c35 { color: #ff7af0; text-shadow: 0 0 4px rgba(255, 122, 240, 0.45); }   /* 紫 */
-  .c36 { color: #5ff5ff; text-shadow: 0 0 4px rgba(95, 245, 255, 0.45); }    /* 青 */
-  .c90 { color: #5f8f6a; text-shadow: none; }                                /* 灰 */
+  /* 游戏里的颜色 (Python 那边用 ANSI 控制字符上色, 下面的 write() 把它们换成这些样式; 面板上也用) */
+  .c31 { color: var(--red); text-shadow: 0 0 4px rgba(255, 107, 107, 0.45); }   /* 红 */
+  .c32 { color: var(--fg); }                                                    /* 绿 */
+  .c33 { color: var(--yellow); text-shadow: 0 0 4px rgba(255, 215, 95, 0.45); } /* 黄 */
+  .c34 { color: var(--blue); text-shadow: 0 0 4px rgba(108, 182, 255, 0.45); }  /* 蓝 */
+  .c35 { color: var(--purple); text-shadow: 0 0 4px rgba(255, 122, 240, 0.45); }/* 紫 */
+  .c36 { color: var(--cyan); text-shadow: 0 0 4px rgba(95, 245, 255, 0.45); }   /* 青 */
+  .c90 { color: var(--gray); text-shadow: none; }                               /* 灰 */
   .bold { font-weight: bold; }
-  #controls {
-    border-top: 1px solid var(--dim);
-    padding: 8px;
+  /* 中文字 (还有全角的标点) 正好占两个英文字那么宽, 跟终端里一样, 不然有的字体里中文字窄一些, 画会对不齐 */
+  .w { display: inline-block; width: 2ch; text-align: center; }
+
+  button {
+    font: inherit;
+    font-size: 15px;
+    color: var(--bg);
+    background: var(--fg);
+    border: none;
+    border-radius: 5px;
+    padding: 8px 12px;
+    cursor: pointer;
   }
-  #bar {
-    display: flex;
+  button:disabled { background: var(--dim); cursor: default; }
+
+  /* ---------- 操作: 游戏在问什么, 能选的都是按钮 ---------- */
+  #ask { margin: 0 0 8px; color: var(--yellow); min-height: 1em; }
+  #choices {
+    display: grid;
     gap: 6px;
+    grid-template-columns: repeat(auto-fill, minmax(8.5em, 1fr));
   }
+  @media (min-width: 900px) and (min-height: 600px) {
+    #choices { grid-template-columns: 1fr; }   /* 电脑上按钮在左边一列, 一个一个往下排 */
+  }
+  #choices button.choice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 6px 10px;
+    text-align: left;
+    color: var(--fg);
+    background: #000;
+    border: 1px solid var(--dim);
+  }
+  #choices button.choice:not(:disabled):hover { border-color: var(--fg); background: var(--faint); }
+  #choices button.choice:disabled { color: var(--dim); background: #000; }
+  #choices .number {
+    flex: none;
+    min-width: 1.6em;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 12px;
+    text-align: center;
+    color: var(--bg);
+    background: var(--dim);
+  }
+  #choices .icon { flex: none; font-size: 18px; }
+  #choices button.big {
+    grid-column: 1 / -1;
+    min-height: 48px;
+    font-size: 17px;
+    font-weight: bold;
+    text-align: center;
+  }
+  #choices button.stop { background: var(--yellow); }
+  #choices .keypad { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  #choices .keypad button { color: var(--fg); background: #000; border: 1px solid var(--dim); padding: 10px 0; }
+  .hint { color: var(--gray); font-size: 13px; }
+
+  /* 打字的地方: 名字、打猎时打的词、买多少东西。在「操作」面板的最下面 */
+  #bar { display: flex; gap: 6px; margin-top: 10px; }
   #answer {
     flex: 1;
     min-width: 0;
@@ -64,60 +234,102 @@
     border: 1px solid var(--dim);
     border-radius: 4px;
   }
-  button {
-    font: inherit;
-    font-size: 16px;
-    color: var(--bg);
-    background: var(--fg);
-    border: none;
-    border-radius: 4px;
-    padding: 8px 14px;
-    cursor: pointer;
+  /* 手机上: 不用打字的时候把输入框藏起来, 留地方给按钮 */
+  @media (max-width: 899px), (max-height: 599px) {
+    #app[data-kind="choices"] #bar, #app[data-kind="enter"] #bar,
+    #app[data-kind="driving"] #bar, #app[data-kind="busy"] #bar { display: none; }
   }
-  button:disabled {
-    background: var(--dim);
-    cursor: default;
-  }
-  /* 手机上点数字用的小键盘 */
-  #keypad {
-    display: grid;
-    grid-template-columns: repeat(11, 1fr);
-    gap: 4px;
-    margin-top: 6px;
-  }
-  #music {
-    color: var(--fg);
-    background: #000;
-    border: 1px solid var(--dim);
-    padding: 8px 10px;
-  }
-  #music.off {
-    color: var(--dim);
-  }
-  #keypad button {
-    padding: 8px 0;
-    color: var(--fg);
-    background: #000;
-    border: 1px solid var(--dim);
-  }
+
+  /* ---------- 状态 ---------- */
+  #status h3 { margin: 12px 0 4px; font-size: 13px; color: var(--yellow); }
+  #status h3:first-child { margin-top: 0; }
+  #status .line { margin: 2px 0; }
+  #status .muted, .muted { color: var(--gray); }
+  #status .small { font-size: 13px; }
+  .meter { height: 8px; margin: 4px 0; border: 1px solid var(--dim); border-radius: 4px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; background: var(--cyan); }
+  .meter.c31 > i { background: var(--red); }
+  .meter.c33 > i { background: var(--yellow); }
+  .meter.c32 > i { background: var(--fg); }
+  #status table { border-collapse: collapse; width: 100%; }
+  #status td { padding: 1px 0; }
+  #status td.amount { text-align: right; padding-right: 8px; white-space: nowrap; }
+  #status .member { margin: 6px 0 10px; }
+  #status .member .who { display: flex; justify-content: space-between; gap: 6px; }
+  #status .tag { font-size: 12px; padding: 0 4px; border-radius: 3px; border: 1px solid currentColor; margin-left: 4px; }
+
+  /* ---------- 地图 ---------- */
+  #mapbox .inside { padding: 0; overflow: hidden; }
+  #map { display: block; width: 100%; height: 100%; }
+  #map text { font-family: inherit; fill: var(--fg); }
+
+  /* ---------- 旅行日记 ---------- */
+  #log { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+  #log li { margin: 2px 0; }
+  #log .date { color: var(--cyan); margin-right: 6px; }
+
+  /* ---------- 标签 (手机、平板竖着拿) ---------- */
+  #tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  #tabs button { color: var(--fg); background: #000; border: 1px solid var(--dim); padding: 8px 0; }
+  #tabs button[aria-selected="true"] { color: var(--bg); background: var(--fg); }
+
+  #music { color: var(--fg); background: #000; border: 1px solid var(--dim); padding: 4px 10px; font-size: 13px; }
+  #music.off { color: var(--dim); }
 </style>
 </head>
 <body>
-<pre id="screen" aria-live="polite"></pre>
-<div id="controls">
-  <form id="bar" autocomplete="off">
-    <input id="answer" aria-label="你的回答" maxlength="200" disabled
-           autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="等游戏载入……">
-    <button id="send" type="submit" disabled>确定</button>
+<div id="app" data-tab="actions">
+  <header id="titlebar">
+    <span class="name">废土之旅</span>
+    <span id="where"></span>
     <button id="music" type="button" aria-label="音乐开关">♪ 开</button>
-  </form>
-  <div id="keypad"></div>
+  </header>
+
+  <section id="view">
+    <pre id="screen" aria-live="polite"></pre>
+  </section>
+
+  <section id="actionsbox" class="panel" aria-label="操作">
+    <h2>操作</h2>
+    <div class="inside">
+      <p id="ask"></p>
+      <div id="choices"></div>
+      <form id="bar" autocomplete="off">
+        <input id="answer" aria-label="你的回答" maxlength="200" disabled
+               autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="等游戏载入……">
+        <button id="send" type="submit" disabled>确定</button>
+      </form>
+    </div>
+  </section>
+
+  <aside id="statusbox" class="panel" aria-label="状态">
+    <h2>状态</h2>
+    <div class="inside" id="status"></div>
+  </aside>
+
+  <section id="mapbox" class="panel" aria-label="路线图">
+    <h2>路线图</h2>
+    <div class="inside"><svg id="map" role="img" aria-label="俄勒冈小道的地图"></svg></div>
+  </section>
+
+  <section id="logbox" class="panel" aria-label="旅行日记">
+    <h2>旅行日记</h2>
+    <div class="inside"><ol id="log"></ol></div>
+  </section>
+
+  <nav id="tabs" role="tablist">
+    <button type="button" data-tab="actions" role="tab">操作</button>
+    <button type="button" data-tab="status" role="tab">状态</button>
+    <button type="button" data-tab="map" role="tab">地图</button>
+    <button type="button" data-tab="log" role="tab">日记</button>
+  </nav>
 </div>
 
 <script>
   const SAVE_KEY = "wasteland-trail-save";       // 存档在浏览器里的名字
   const SCORES_KEY = "wasteland-trail-scores";   // 最高分榜在浏览器里的名字
   const MUSIC_KEY = "wasteland-trail-music";     // 音乐开关 ("off" 是关着) 在浏览器里的名字
+  const app = document.getElementById("app");
   const screenBox = document.getElementById("screen");
   const answer = document.getElementById("answer");
   const send = document.getElementById("send");
@@ -153,6 +365,26 @@
         }
         if (code[3] === "A" && !code[1]) {   // 光标往上移几行
           row = Math.max(0, row - Number(code[2] || 1));
+        } else if (code[3] === "H" && !code[1]) {   // 光标回到左上角 (换画面、一直往前开时每天的动画都从这里画起)
+          row = 0;
+          col = 0;
+        } else if (code[3] === "J" && !code[1]) {   // 擦字: ESC[2J 和 ESC[3J 擦掉整个屏幕 (换画面), ESC[J 擦掉光标后面的
+          if (code[2] === "2" || code[2] === "3") {
+            lines.length = 0;
+            looks.length = 0;
+            for (let r = 0; r <= row; r++) {
+              lines.push("");
+              looks.push([]);
+            }
+          } else {
+            lines[row] = lines[row].slice(0, col);
+            looks[row] = looks[row].slice(0, col);
+            lines.length = row + 1;
+            looks.length = row + 1;
+          }
+        } else if (code[3] === "K" && !code[1]) {   // ESC[K 擦掉这一行光标后面的字
+          lines[row] = lines[row].slice(0, col);
+          looks[row] = looks[row].slice(0, col);
         } else if (code[3] === "m") {        // 换颜色, 比如 ESC[31m 是红色, ESC[33;1m 是黄色加粗, ESC[0m 变回原样
           look = lookFor(code[2]);
         }                                    // 其他的 (比如藏光标、显示光标) 这里用不着
@@ -204,7 +436,13 @@
   }
 
   function escapeHtml(text) {
-    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  // 终端里占两格的字: 中日韩的字、全角的标点和符号 (跟游戏里算宽度的 text_width 一样)
+  const WIDE = /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿ꀀ-꓏가-힣豈-﫿︰-﹏！-｠￠-￦]/g;
+  function markWide(text) {
+    return text.replace(WIDE, '<span class="w">$&</span>');
   }
 
   function draw() {
@@ -220,7 +458,7 @@
         const style = rowLooks[start] || "";
         let end = start + 1;
         while (end < line.length && (rowLooks[end] || "") === style) end++;
-        const text = escapeHtml(line.slice(start, end));
+        const text = markWide(escapeHtml(line.slice(start, end)));
         parts.push(style ? `<span class="${style}">${text}</span>` : text);
         start = end;
       }
@@ -256,13 +494,13 @@
     loopTimer = null;
   }
 
-  // ---------- 字号: 跟着屏幕大小变 ----------
-  // 手机、平板、电脑的屏幕大小差很多, 字号固定的话, 大屏幕上字很小、右边空一大片。所以按屏幕算字号:
-  // 一行要放得下最宽的字符画 (60 个英文字), 一屏至少要看得到 SCREEN_ROWS 行 (状态栏、菜单加上动画), 在这个范围里尽量大
+  // ---------- 字号: 跟着屏幕那块地方的大小变 ----------
+  // 一行要放得下最宽的字符画 (60 个英文字), 一屏至少要看得到 SCREEN_ROWS 行 (动画加上下面几行字), 在这个范围里尽量大
   const SCREEN_COLUMNS = 61;   // 多留一格, 免得刚好卡在边上
-  const SCREEN_ROWS = 28;
+  const SCREEN_ROWS = 24;      // 电脑、平板横着拿
+  const SMALL_SCREEN_ROWS = 18;   // 手机、平板竖着拿: 下面的面板占了地方, 少看几行 (多了就往上滚), 字别太小
   const MIN_FONT = 8;
-  const MAX_FONT = 28;
+  const MAX_FONT = 26;
   const LINE_HEIGHT = 1.3;     // 跟上面 #screen 的 line-height 一样
 
   function letterWidth() {
@@ -280,14 +518,30 @@
     const style = getComputedStyle(screenBox);
     const width = screenBox.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
     const height = screenBox.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-    const byWidth = width / (SCREEN_COLUMNS * letterWidth());
-    const byHeight = height / (SCREEN_ROWS * LINE_HEIGHT);
-    const size = Math.max(MIN_FONT, Math.min(MAX_FONT, byWidth, byHeight));
+    if (width <= 0 || height <= 0) return;
+    const letter = letterWidth();
+    const rows = window.matchMedia("(min-width: 900px) and (min-height: 600px)").matches ? SCREEN_ROWS : SMALL_SCREEN_ROWS;
+    const size = Math.max(MIN_FONT, Math.min(MAX_FONT, width / (SCREEN_COLUMNS * letter), height / (rows * LINE_HEIGHT)));
     screenBox.style.fontSize = size.toFixed(1) + "px";
     screenBox.scrollTop = screenBox.scrollHeight;   // 字变了大小, 还是停在最下面
+    // 告诉游戏这个字号下一屏放得下几列、几行字 (见 run_in_browser.py 的 screen_size)
+    const used = parseFloat(screenBox.style.fontSize);
+    screenColumns = Math.floor(width / (letter * used) + 0.01);
+    screenRows = Math.floor(height / (LINE_HEIGHT * used) + 0.01);
+    tellScreenSize();
   }
 
-  // 屏幕那块地方一变大小就重新算: 转屏幕、拉大拉小窗口, 还有下面的数字键摆好以后屏幕变矮了, 都会变
+  // 跟后台线程 (游戏) 共用的几个数字: [0] 车自己往前开的时候, 玩家要不要停下来 (1 是要); [1] [2] 一屏放得下几列、几行字
+  let flags = null;
+  let screenColumns = 0;
+  let screenRows = 0;
+  function tellScreenSize() {
+    if (!flags) return;
+    Atomics.store(flags, 1, screenColumns);
+    Atomics.store(flags, 2, screenRows);
+  }
+
+  // 屏幕那块地方一变大小就重新算: 转屏幕、拉大拉小窗口都会变
   let fitScheduled = false;
   function fitSoon() {
     if (fitScheduled) return;
@@ -358,8 +612,7 @@
       playlist = playlist.filter(([, loop]) => loop);
     }
     playFirst();
-    // 在电脑上点完按钮, 把光标放回输入框, 接着打字就行; 手机上不放, 不然会弹出打字的键盘挡住画面
-    if (waiting && window.matchMedia("(pointer: fine)").matches) answer.focus({ preventScroll: true });
+    focusAnswer();
   });
   showMusicButton();
 
@@ -370,25 +623,28 @@
     });
   }
 
-  // ---------- 输入: 把玩家输入的字放进和后台线程共用的内存, 再叫醒它 ----------
+  // ---------- 输入: 把玩家的回答放进和后台线程共用的内存, 再叫醒它 ----------
   let memory, control, letters;
-  let waiting = false;   // 游戏是不是正在等玩家输入
+  let waiting = false;   // 游戏是不是正在等玩家回答
+
+  // 电脑上 (有鼠标), 把光标放进输入框, 直接打数字也行; 手机上不放, 不然会弹出打字的键盘挡住画面
+  function focusAnswer() {
+    if (waiting && window.matchMedia("(pointer: fine)").matches) answer.focus({ preventScroll: true });
+  }
 
   function askForAnswer() {
     waiting = true;
     answer.disabled = false;
     send.disabled = false;
     answer.placeholder = "在这里输入, 按回车或点「确定」";
-    answer.focus({ preventScroll: true });
+    renderActions();
+    focusAnswer();
   }
 
-  document.getElementById("bar").addEventListener("submit", (event) => {
-    event.preventDefault();
+  function submitAnswer(text) {
     if (!waiting) return;
     stopLoop();
-    const text = answer.value;
-    answer.value = "";
-    write(text + "\n");   // 像终端一样, 把输入的字显示在问题后面
+    write(text + "\n");   // 像终端一样, 把回答显示在问题后面
     const bytes = new TextEncoder().encode(text).slice(0, letters.length);
     letters.set(bytes);
     control[1] = bytes.length;
@@ -396,19 +652,315 @@
     Atomics.notify(control, 0);
     waiting = false;
     send.disabled = true;
+    renderActions();
+  }
+
+  document.getElementById("bar").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = answer.value;
+    answer.value = "";
+    submitAnswer(text);
   });
 
-  // 小键盘: 1~9、0 和退格
-  const keypad = document.getElementById("keypad");
-  for (const key of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "←"]) {
+  // ---------- 一直往前开的时候: 点「停下来」、点一下屏幕或者按回车, 叫车停下来 ----------
+  // 车自己往前开的时候, 游戏 (Python) 没在等回答。这时候在共用内存里记一笔, 游戏每画一帧会看一眼 (见 run_in_browser.py 的 stop_pressed)
+  function askToStop() {
+    if (!waiting && flags) Atomics.store(flags, 0, 1);
+  }
+  screenBox.addEventListener("pointerdown", askToStop);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") askToStop();
+  });
+
+  // ---------- 图形界面: 按钮、状态、地图、旅行日记 ----------
+  // 游戏每次问问题以前, 会通过 run_in_browser.py 把「现在的状态」和「在问什么」交过来 (见 gui.py), 这里画出来
+  const askBox = document.getElementById("ask");
+  const choicesBox = document.getElementById("choices");
+  let question = null;   // 游戏在问什么: {kind: "choices" | "enter" | "number", ...}; null 是要打字 (名字、打猎) 或者没在问
+  let driving = false;   // 车是不是正在一直往前开
+  let state = null;      // 这一局现在的状态 (还没开始玩就是 null)
+  let guiOn = false;     // 游戏有没有交东西过来 (浏览器里还留着旧版的 worker.js 时没有, 就跟以前一样只用屏幕和输入框)
+
+  const COLOR_CLASS = { "红": "c31", "绿": "c32", "黄": "c33", "蓝": "c34", "紫": "c35", "青": "c36", "灰": "c90" };
+  const ICONS = {
+    "继续前进": "🚗", "休息一天": "⛺", "搜刮废墟": "🔍", "打猎": "🎯", "用药": "💊",
+    "改变口粮": "🍲", "改变速度": "⏩", "查看队伍": "👥", "旅行日记": "📖", "存档": "💾",
+    "开始新游戏": "🆕", "继续游戏": "▶️", "游戏说明": "❓", "最高分": "🏆", "退出游戏": "🚪",
+  };
+
+  function onGui(text) {
+    const message = JSON.parse(text);
+    if (!guiOn) {
+      guiOn = true;
+      app.classList.add("gui");
+    }
+    if (message.what === "state") {
+      state = message.state;
+      renderStatus();
+      renderMap();
+      renderLog();
+    } else if (message.what === "question") {
+      question = message.question;
+      if (question) showTab("actions");
+      renderActions();
+    } else if (message.what === "driving") {
+      driving = message.driving;
+      if (driving) showTab("actions");
+      renderActions();
+      renderStatus();
+    }
+  }
+
+  function makeButton(classes, html, onClick) {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = key;
-    button.addEventListener("click", () => {
-      answer.value = key === "←" ? answer.value.slice(0, -1) : answer.value + key;
-    });
-    keypad.appendChild(button);
+    button.className = classes;
+    button.innerHTML = html;
+    button.addEventListener("click", onClick);
+    choicesBox.appendChild(button);
+    return button;
   }
+
+  // 「操作」面板: 能选的变成按钮
+  function renderActions() {
+    const kind = waiting ? (question ? question.kind : "text") : driving ? "driving" : "busy";
+    app.dataset.kind = kind;
+    if (kind === "busy") {   // 游戏正在忙 (放动画、写字): 按钮先留着, 只是点不了, 免得画面一闪一闪
+      for (const button of choicesBox.querySelectorAll("button")) button.disabled = true;
+      return;
+    }
+    choicesBox.replaceChildren();
+    if (kind === "choices") {
+      askBox.textContent = question.prompt;
+      for (const [number, label] of question.choices) {
+        const icon = ICONS[label] ? `<span class="icon">${ICONS[label]}</span>` : "";
+        const words = label ? `<span class="number">${number}</span>${icon}<span>${escapeHtml(label)}</span>` : `<span>${number}</span>`;
+        makeButton("choice", words,
+                   () => submitAnswer(String(number)));
+      }
+    } else if (kind === "enter") {
+      askBox.textContent = "";
+      const typeNext = question.typeNext;
+      makeButton("big", escapeHtml(question.label) + " ▶", () => {
+        submitAnswer("");
+        if (typeNext) answer.focus();   // 打猎: 马上要打字, 趁着点按钮的时候把输入框点开 (手机上才会出键盘)
+      });
+    } else if (kind === "number") {
+      askBox.textContent = question.prompt;
+      const pad = document.createElement("div");
+      pad.className = "keypad";
+      for (const key of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "←", "0", "确定"]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = key;
+        button.addEventListener("click", () => {
+          if (key === "确定") {
+            const text = answer.value;
+            answer.value = "";
+            submitAnswer(text);
+          } else {
+            answer.value = key === "←" ? answer.value.slice(0, -1) : answer.value + key;
+          }
+        });
+        pad.appendChild(button);
+      }
+      choicesBox.appendChild(pad);
+    } else if (kind === "text") {
+      askBox.textContent = guiOn ? lastLine() : "";
+      choicesBox.innerHTML = guiOn ? `<p class="hint">在下面的框里打字, 打完按「确定」</p>` : "";
+    } else if (kind === "driving") {
+      askBox.textContent = "车在一直往前开……";
+      makeButton("big stop", "■ 停下来", askToStop);
+    }
+  }
+
+  function lastLine() {
+    for (let r = lines.length - 1; r >= 0; r--) {
+      if (lines[r].trim()) return lines[r].trim();
+    }
+    return "";
+  }
+
+  // 标签 (手机、平板竖着拿时才看得到): 操作 / 状态 / 地图 / 日记
+  const tabButtons = document.querySelectorAll("#tabs button");
+  function showTab(name) {
+    app.dataset.tab = name;
+    for (const button of tabButtons) button.setAttribute("aria-selected", String(button.dataset.tab === name));
+    if (name === "map") renderMap();
+    if (name === "log") scrollLog();
+  }
+  for (const button of tabButtons) button.addEventListener("click", () => showTab(button.dataset.tab));
+  showTab("actions");
+
+  // 「状态」面板
+  function meter(percent, colorClass) {
+    return `<div class="meter ${colorClass || ""}"><i style="width:${Math.max(0, Math.min(100, percent))}%"></i></div>`;
+  }
+
+  function renderStatus() {
+    const box = document.getElementById("status");
+    const where = document.getElementById("where");
+    if (!state) {
+      box.innerHTML = `<p class="muted">还没出发。<br>开始新游戏或者继续游戏以后, 这里会显示日期、天气、物资和队伍。</p>`;
+      where.textContent = "";
+      return;
+    }
+    const s = state;
+    const color = (name) => COLOR_CLASS[name] || "";
+    const car = s.car || (driving ? "在开" : "停着");
+    where.textContent = `${s.date} · 已走 ${s.traveled} · 下一站 ${s.next.name}`;
+    let html = `<h3>${escapeHtml(s.date)} <span class="muted small">第 ${s.day} 天 · ${escapeHtml(s.difficulty)}</span></h3>`;
+    html += `<div class="line"><span class="${color(s.weatherColor)}">${escapeHtml(s.weather)}</span> ${escapeHtml(s.temperature)} ` +
+            `<span class="${color(s.temperatureColor)}">${escapeHtml(s.temperatureWord)}</span></div>`;
+    html += `<div class="line small muted">${escapeHtml(s.weatherNote)}</div>`;
+    html += `<h3>路程</h3>${meter(s.km * 100 / s.total)}`;
+    html += `<div class="line small">已走 ${escapeHtml(s.traveled)}, 还剩 ${escapeHtml(s.left)}</div>`;
+    html += `<div class="line">下一站: <b>${escapeHtml(s.next.name)}</b> <span class="muted">(${escapeHtml(s.next.kind)})</span></div>`;
+    html += `<div class="line small">还有 ${escapeHtml(s.next.distance)} · 车: <span class="${s.car ? "c31" : ""}">${escapeHtml(car)}</span></div>`;
+    if (s.notes.length) {
+      html += `<h3>注意</h3>`;
+      for (const [noteColor, text] of s.notes) html += `<div class="line small ${color(noteColor)}">${escapeHtml(text)}</div>`;
+    }
+    html += `<h3>队伍</h3>`;
+    for (const m of s.party) {
+      const tags = [];
+      if (m.leader) tags.push(`<span class="tag muted">主角</span>`);
+      if (m.job) tags.push(`<span class="tag c36">${escapeHtml(m.job)}</span>`);
+      let health = `<span class="${color(m.color)}">${escapeHtml(m.word)} ${m.health}</span>`;
+      if (m.sick) health += ` <span class="c31">${escapeHtml(m.sick)}</span>`;
+      if (m.radsWord) health += ` <span class="c35">辐射 ${m.rads} ${escapeHtml(m.radsWord)}</span>`;
+      else if (m.rads) health += ` <span class="muted">辐射 ${m.rads}</span>`;
+      html += `<div class="member"><div class="who"><span>${escapeHtml(m.name)}${tags.join("")}</span></div>` +
+              `${meter(m.health, color(m.color))}<div class="small">${health}</div></div>`;
+    }
+    if (s.dead.length) html += `<div class="line small muted">路上失去的人: ${s.dead.map(escapeHtml).join("、")}</div>`;
+    html += `<h3>物资</h3><table>`;
+    for (const item of s.supplies) {
+      const days = item.days === null ? "" : `<span class="${item.days <= 3 ? "c31" : "muted"}">够 ${item.days} 天</span>`;
+      html += `<tr><td>${escapeHtml(item.name)}</td><td class="amount">${item.amount} ${escapeHtml(item.measure)}</td><td>${days}</td></tr>`;
+    }
+    html += `<tr><td>钱</td><td class="amount">${s.money} 块</td><td></td></tr></table>`;
+    html += `<div class="line small">载重 ${escapeHtml(s.load)} / ${escapeHtml(s.capacity)}</div>${meter(s.loadPercent, s.loadPercent >= 95 ? "c33" : "")}`;
+    html += `<div class="line small">口粮: ${escapeHtml(s.ration)} · 速度: ${escapeHtml(s.pace)}</div>`;
+    box.innerHTML = html;
+  }
+
+  // 「旅行日记」面板: 最新的在最下面
+  let shownDiary = "";
+  function renderLog() {
+    const diary = state ? state.diary : [];
+    const key = JSON.stringify(diary);
+    if (key === shownDiary) return;
+    shownDiary = key;
+    const list = document.getElementById("log");
+    list.innerHTML = diary.length
+      ? diary.map(([date, text]) => `<li><span class="date">${escapeHtml(date)}</span>${escapeHtml(text)}</li>`).join("")
+      : `<li class="muted">路上发生的大事会记在这里。</li>`;
+    scrollLog();
+  }
+  function scrollLog() {
+    const inside = document.querySelector("#logbox .inside");
+    inside.scrollTop = inside.scrollHeight;
+  }
+
+  // 「路线图」: 按真实的经纬度画出俄勒冈小道 (只用来画图, 地名要跟游戏里的一样, 测试会检查)
+  const PLACES = {
+    "独立城": [39.09, -94.42], "堪萨斯河渡口": [39.06, -95.68], "大蓝河": [39.84, -96.65], "卡尼堡": [40.64, -98.99],
+    "灰洞": [41.29, -102.12], "法院岩": [41.60, -103.11], "烟囱岩": [41.70, -103.35], "斯科茨崖": [41.83, -103.70],
+    "拉勒米堡": [42.21, -104.56], "北普拉特河渡口": [42.85, -106.32], "独立岩": [42.49, -107.13], "魔鬼门": [42.44, -107.21],
+    "南山口": [42.36, -108.92], "格林河": [41.86, -110.05], "布里杰堡": [41.32, -110.39], "苏打泉": [42.65, -111.60],
+    "霍尔堡": [43.03, -112.43], "美国瀑布": [42.78, -112.85], "鲑鱼瀑布": [42.70, -114.85], "蛇河渡口": [42.95, -115.30],
+    "博伊西堡": [43.81, -117.02], "大圆谷": [45.32, -118.09], "蓝山": [45.50, -118.40], "达尔斯": [45.60, -121.18],
+    "俄勒冈城": [45.36, -122.61],
+  };
+  // 辐射热点附近的核设施 (画一个紫色的圈)
+  const HOTSPOT_PLACES = {
+    "导弹发射井一带": [41.25, -104.2], "爱达荷国家实验室一带": [43.60, -112.85], "汉福德核基地下游": [46.30, -119.50],
+  };
+
+  function renderMap() {
+    const svg = document.getElementById("map");
+    const width = svg.clientWidth;
+    const height = svg.clientHeight;
+    if (!width || !height) return;   // 藏起来了 (别的标签), 换过来的时候再画
+    const names = Object.keys(PLACES);
+    const all = names.map((name) => PLACES[name]).concat(Object.values(HOTSPOT_PLACES));
+    const shrink = Math.cos(42 * Math.PI / 180);   // 经线越往北越近, 横着要缩一点
+    const lons = all.map(([, lon]) => lon * shrink);
+    const lats = all.map(([lat]) => lat);
+    const pad = 22;
+    const scale = Math.min((width - 2 * pad) / (Math.max(...lons) - Math.min(...lons)),
+                           (height - 2 * pad) / (Math.max(...lats) - Math.min(...lats)));
+    const left = (width - scale * (Math.max(...lons) - Math.min(...lons))) / 2;
+    const top = (height - scale * (Math.max(...lats) - Math.min(...lats))) / 2;
+    const point = ([lat, lon]) => [left + (lon * shrink - Math.min(...lons)) * scale, top + (Math.max(...lats) - lat) * scale];
+
+    // 每个地方离起点几公里 (有状态的时候才知道), 算出车在哪
+    const km = { "独立城": 0 };
+    let total = 3119;
+    const kinds = {};
+    if (state) {
+      for (const place of state.places) { km[place.name] = place.km; kinds[place.name] = place.kind; }
+      km[state.destination] = state.total;
+      total = state.total;
+    }
+    const route = names.map((name) => point(PLACES[name]));
+    let car = null;
+    let passed = [route[0]];
+    if (state) {
+      for (let i = 1; i < names.length; i++) {
+        const from = km[names[i - 1]];
+        const to = km[names[i]];
+        if (state.km >= to) {
+          passed.push(route[i]);
+          continue;
+        }
+        const t = Math.max(0, (state.km - from) / (to - from));
+        car = [route[i - 1][0] + (route[i][0] - route[i - 1][0]) * t, route[i - 1][1] + (route[i][1] - route[i - 1][1]) * t];
+        passed.push(car);
+        break;
+      }
+      if (!car) car = route[route.length - 1];
+    }
+    const font = width < 450 ? 10 : 12;
+    const path = (points) => points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+    let html = "";
+    for (const [name, place] of Object.entries(HOTSPOT_PLACES)) {
+      const [x, y] = point(place);
+      html += `<circle cx="${x}" cy="${y}" r="${scale * 0.75}" fill="rgba(255,122,240,0.16)" stroke="rgba(255,122,240,0.5)" stroke-dasharray="3 3"><title>${name} (辐射偏高)</title></circle>`;
+      html += `<text x="${x}" y="${y + 4}" text-anchor="middle" font-size="${font + 2}" style="fill:var(--purple)">☢</text>`;
+    }
+    html += `<polyline points="${path(route)}" fill="none" stroke="var(--dim)" stroke-width="2" stroke-dasharray="4 4"/>`;
+    if (state) html += `<polyline points="${path(passed)}" fill="none" stroke="var(--cyan)" stroke-width="3"/>`;
+    names.forEach((name, i) => {
+      const [x, y] = route[i];
+      const kind = i === 0 ? "起点" : i === names.length - 1 ? "终点" : kinds[name] || "地标";
+      const title = `<title>${name}${state && km[name] !== undefined ? ` (${km[name]} 公里)` : ""}</title>`;
+      if (kind === "据点" || kind === "起点" || kind === "终点") {
+        html += `<rect x="${x - 5}" y="${y - 5}" width="10" height="10" style="fill:var(--yellow)">${title}</rect>`;
+      } else if (kind === "河") {
+        html += `<circle cx="${x}" cy="${y}" r="4.5" style="fill:var(--blue)">${title}</circle>`;
+      } else {
+        html += `<path d="M${x} ${y - 5} L${x + 4.5} ${y + 3.5} L${x - 4.5} ${y + 3.5} Z" style="fill:var(--gray)">${title}</path>`;
+      }
+      const isNext = state && name === state.next.name;
+      if (kind !== "地标" && kind !== "河" || isNext) {   // 据点、起点终点都写名字, 地标和河只写下一站的
+        const below = i % 2 === 0;
+        html += `<text x="${x}" y="${below ? y + font + 6 : y - 9}" text-anchor="middle" font-size="${font}"` +
+                `${isNext ? ' font-weight="bold" style="fill:var(--cyan)"' : ""}>${name}</text>`;
+      }
+    });
+    if (car) {
+      html += `<circle cx="${car[0]}" cy="${car[1]}" r="9" fill="none" stroke="var(--fg)" stroke-width="2"><animate attributeName="r" values="6;11;6" dur="1.6s" repeatCount="indefinite"/></circle>`;
+      html += `<circle cx="${car[0]}" cy="${car[1]}" r="5" style="fill:var(--fg)"><title>你在这里</title></circle>`;
+    }
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.innerHTML = html;
+  }
+  if (window.ResizeObserver) new ResizeObserver(() => renderMap()).observe(document.getElementById("map"));
+  renderStatus();
+  renderMap();
+  renderLog();
 
   // ---------- 启动 ----------
   function remember(key, value) {
@@ -441,12 +993,16 @@
     memory = new SharedArrayBuffer(8 + 1024);
     control = new Int32Array(memory, 0, 2);
     letters = new Uint8Array(memory, 8);
+    const flagsMemory = new SharedArrayBuffer(12);
+    flags = new Int32Array(flagsMemory);
+    tellScreenSize();
 
     const worker = new Worker("web/worker.js", { type: "module" });
     worker.onmessage = (event) => {
       const message = event.data;
       if (message.type === "output") write(message.text);
       else if (message.type === "need-input") askForAnswer();
+      else if (message.type === "gui") onGui(message.text);
       else if (message.type === "save") writeStored(SAVE_KEY, message.text);
       else if (message.type === "scores") writeStored(SCORES_KEY, message.text);
       else if (message.type === "music") playMusic(JSON.parse(message.text));
@@ -457,12 +1013,16 @@
         answer.disabled = true;
         send.disabled = true;
         answer.placeholder = "刷新网页可以重新开始";
+        waiting = false;
+        question = null;
+        driving = false;
+        renderActions();
       }
     };
     worker.onerror = (event) => write("\n网页版出错了: " + (event.message || "后台没能把游戏载入") + "\n" +
       "刷新网页再试一次。还是不行的话, 请到 https://github.com/aizhang453-hash/wasteland-trail/issues 告诉作者用的是什么设备和浏览器。\n");
     write("正在启动废土之旅……\n");
-    worker.postMessage({ inputMemory: memory, savedGame: readStored(SAVE_KEY), savedScores: readStored(SCORES_KEY) });
+    worker.postMessage({ inputMemory: memory, flagsMemory, savedGame: readStored(SAVE_KEY), savedScores: readStored(SCORES_KEY) });
   }
 
   start();

@@ -5,9 +5,11 @@
 """
 
 import atexit
+import builtins
 import json
 import os
 import random
+import re
 import select
 import shutil
 import subprocess
@@ -39,7 +41,7 @@ HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "high
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v2.6"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v3.0"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -319,6 +321,25 @@ ANIMATION_DELAY = 0.06    # 每帧停几秒 (24 帧大约 1.5 秒)
 PICTURE_DELAY = 0.03      # 地标、据点这些画一行一行地画出来, 每行停几秒
 TITLE_ANIMATION_DELAY = 0.12   # 主菜单的小动画 (车一直往前开、蘑菇云翻滚) 每帧停几秒
 
+# 换画面: 像原版那样一个画面一个画面地换。每个画面都从屏幕最上面写起, 屏幕上有还没看的字时, 先等玩家按回车再换。
+# 只在真正的终端里和网页版里换 (跑测试时还是一直往下写)
+SCREENS = True            # 想要以前那样一直往下滚, 就改成 False
+# 一直往前开: 选「继续前进」以后, 车像原版一样一直往前开, 动画一直在动, 下面的日期、路程跟着变;
+# 路上出了事, 说完了接着开; 到了地方、或者玩家按了回车才停下来。要换画面 (SCREENS) 才能一直开
+KEEP_DRIVING = True       # 改成 False 就是选一次「继续前进」只走一天
+# 大画面: 窗口够大的时候 (电脑的终端窗口拉大, 或者在电脑、平板上打开网页版), 每天的菜单和开车的画面像原版 CD 版那样,
+# 一个画面分成几块: 动画、状态、路线图、最近的事。窗口太小就用普通的画面
+DASHBOARD = True          # 不想要就改成 False
+DASHBOARD_WIDTH = 100     # 大画面有多宽 (窗口要比这个宽一点才用)
+DASHBOARD_ROWS = 28       # 窗口至少要有几行才用大画面
+# 网页版的图形界面: 按钮、状态面板、地图、旅行日记都由网页来画, 游戏只要告诉网页现在的状态 (gui_update) 和在问什么。
+# 这时候游戏自己就不画状态栏和大画面了。由 web/run_in_browser.py 打开, 在电脑上玩一直是 False
+GUI = False
+DIARY_PAGE = 10           # 换画面的时候, 旅行日记一页放几条 (一条常常要占两行)
+PARTY_PAGE = 2            # 换画面的时候, 查看队伍一页放几个人 (每个人都有头像, 要占好几行)
+DRIVE_DAY_FRAMES = 20     # 一直往前开的时候, 动画播几帧算过了一天 (每帧 ANIMATION_DELAY 秒, 20 帧大约 1.2 秒)
+WARN_WEATHER = ["酸雨", "辐射风暴", "辐射沙尘暴"]   # 一直往前开的时候, 天气变成这几种要提醒一下 (在外面伤人, 也许该停下来躲进车里)
+
 # 音乐: 用代码做的老式游戏机音乐, 放在 music 文件夹里 (做音乐的程序是 music/make_music.py, 想改曲子就改它)。
 # 只在真正的终端里和网页版里放 (跑测试时不放)。网页版上还有一个「♪」按钮可以关掉
 MUSIC = True              # 不想听就改成 False
@@ -369,6 +390,93 @@ STRANGER_NAMES = ["迈克", "安娜", "老乔", "凯特", "比尔"]
 # 是不是在网页版里 (网页里的 Python 叫 Pyodide, 它的 sys.platform 是 "emscripten")
 IN_BROWSER = sys.platform == "emscripten"
 
+# 屏幕上的字: unread 是有没有玩家还没看过的新消息 (换画面前要先等玩家看完);
+# driving 是车是不是正在一直往前开 (这时候例行消息不印出来, 动画下面的状态栏都看得到);
+# room 是开车的时候, 动画 (或者大画面) 下面还有没有地方写路上发生的事; frame 是车开到动画的第几帧 (停下来以后画面接得上)
+screen = {"unread": False, "driving": False, "room": True, "frame": 0}
+
+
+def print(*args, **kwargs):
+    """跟 Python 自带的 print 一样, 只是顺便记下「屏幕上多了新消息」。这个文件里的 print 都会经过这里。
+    每天都会说一遍的例行消息 (比如今天开了多远) 不算新消息, 要用 print_routine"""
+    builtins.print(*args, **kwargs)
+    if any(str(arg).strip() for arg in args):
+        screen["unread"] = True
+
+
+def print_routine(text):
+    """例行消息: 跟 print 一样显示出来, 只是不算新消息, 换画面前不用等玩家看。
+    一直往前开的时候干脆不印 (动画下面的状态栏都看得到), 不然每天都要按一次回车"""
+    if not screen["driving"]:
+        builtins.print(text)
+
+
+def can_clear_screen():
+    """能不能换画面: 设置里没关掉, 而且是在真正的终端里或者网页版里"""
+    return SCREENS and (can_read_keys() or IN_BROWSER)
+
+
+def clear_screen():
+    """把屏幕清空, 光标回到左上角。\\x1b[H 是回到左上角, \\x1b[2J 是清屏, \\x1b[3J 是连往上翻才看得到的旧字也清掉"""
+    builtins.print("\x1b[H\x1b[2J\x1b[3J", end="", flush=True)
+    screen["unread"] = False
+
+
+def event_screen():
+    """路上出事、有人去世的时候用: 一直往前开、屏幕上又没有没看过的字, 就直接写在动画下面 (像原版那样, 车还在画面上);
+    别的时候换一个新画面"""
+    if screen["driving"] and screen["room"] and not screen["unread"]:
+        return
+    new_screen()
+
+
+def new_screen():
+    """换一个新画面: 屏幕上还有玩家没看过的新消息, 就先等玩家按回车; 再把屏幕清空, 从最上面写起。
+    不能换画面的时候 (比如跑测试) 什么都不做, 字还是一直往下写"""
+    if not can_clear_screen():
+        return
+    if screen["unread"]:
+        wait_enter()
+    clear_screen()
+
+
+def wait_enter(prompt="按回车继续……"):
+    """等玩家按回车。在终端里只认回车键, 按别的键什么都不会发生, 也不会显示出来"""
+    if not can_read_keys():
+        input(prompt)
+    else:
+        print(prompt, end="", flush=True)
+        old_settings = start_reading_keys()
+        forget_keys()   # 这句话出来以前按的回车不算 (比如开车时按的), 不然画面一闪就过去了
+        try:
+            while True:
+                keys = read_keys()
+                if "\x03" in keys:                      # Ctrl+C
+                    raise KeyboardInterrupt
+                if "\x04" in keys or "\x1a" in keys:    # Ctrl+D (Mac) 或 Ctrl+Z (Windows)
+                    raise EOFError
+                if "\r" in keys or "\n" in keys:
+                    break
+        finally:
+            stop_reading_keys(old_settings)
+        print()
+    screen["unread"] = False
+
+
+def stop_pressed(seconds):
+    """一直往前开的时候用: 最多等 seconds 秒, 看玩家有没有按键要停下来 (按过的键都读掉, 不留给下一个问题)。
+    这时候终端已经是「按一个键就读一个键」的状态, 一按就知道。
+    网页版里 run_in_browser.py 会把它换成: 看玩家有没有点屏幕或者按回车"""
+    if not can_read_keys():
+        time.sleep(seconds)
+        return False
+    if not key_ready(seconds):
+        return False
+    if "\x03" in read_keys():   # Ctrl+C
+        raise KeyboardInterrupt
+    forget_keys()
+    return True
+
 
 def can_read_keys():
     """是不是在真正的终端里玩, 能一个键一个键地读。跑测试或者用管道输入时就不是"""
@@ -405,6 +513,15 @@ def read_keys():
     return data.decode("utf-8", errors="ignore")
 
 
+def forget_keys():
+    """把之前按了、还没读的键都丢掉"""
+    if msvcrt:
+        while msvcrt.kbhit():
+            msvcrt.getwch()
+    else:
+        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+
+
 def key_ready(seconds):
     """最多等 seconds 秒, 看玩家有没有按键 (在终端里一个键一个键读的时候用)"""
     if msvcrt:
@@ -423,13 +540,16 @@ def ask_number(prompt, low, high, idle=None):
     回车也只在输入的数字在范围里时才算数。
     idle: 在终端里等按键的时候, 每隔 TITLE_ANIMATION_DELAY 秒做一次的事 (主菜单用它播动画)"""
     if not can_read_keys():
-        return ask_number_by_line(prompt, low, high)
-    print(prompt, end="", flush=True)
-    old_settings = start_reading_keys()
-    try:
-        return read_number(low, high, idle)
-    finally:
-        stop_reading_keys(old_settings)   # 不管怎么结束 (包括按 Ctrl+C), 都要把终端还原
+        number = ask_number_by_line(prompt, low, high)
+    else:
+        print(prompt, end="", flush=True)
+        old_settings = start_reading_keys()
+        try:
+            number = read_number(low, high, idle)
+        finally:
+            stop_reading_keys(old_settings)   # 不管怎么结束 (包括按 Ctrl+C), 都要把终端还原
+    screen["unread"] = False   # 玩家回答了, 说明屏幕上的字都看过了
+    return number
 
 
 def read_number(low, high, idle=None):
@@ -612,7 +732,11 @@ def show_diary(game):
     print("\n========== 旅行日记 ==========")
     if not game["diary"]:
         print("日记里还什么都没有。")
-    for line in game["diary"]:
+    for i, line in enumerate(game["diary"]):
+        if i and i % DIARY_PAGE == 0 and can_clear_screen():   # 一页放不下了, 翻到下一页
+            wait_enter("按回车看下一页……")
+            clear_screen()
+            print("\n========== 旅行日记 (接上页) ==========")
         print(line)
 
 
@@ -633,6 +757,7 @@ def lose_member(game, name, saying, diary_saying=None):
     game["rads"].pop(name, None)
     game["sick"].pop(name, None)
     game["dead"].append(name)
+    event_screen()
     if game["party"]:   # 最后一个人也没了的话, 放的是全军覆没的音乐
         play_music("去世")
     show_picture(TOMBSTONE, "灰", ["", "", f"这里长眠着 {name}"])
@@ -660,7 +785,7 @@ def freeze(game, cold_health):
     if cold_health == 0 or not cold:
         return []
     who = "你" if len(game["party"]) == 1 else "、".join(cold)
-    print(f"天太冷了, {who}没有冬衣穿, 冻伤了!")
+    print_routine(f"天太冷了, {who}没有冬衣穿, 冻伤了!")
     for name in cold:
         hurt(game, name, -cold_health)
     return cold
@@ -701,7 +826,7 @@ def radiation_damage(game):
     if not sick:
         return
     who = "你" if len(game["party"]) == 1 else "、".join(sick)
-    print(f"辐射在{who}的身体里作怪, 身体越来越差。")
+    print_routine(f"辐射在{who}的身体里作怪, 身体越来越差。")
     for name in sick:
         hurt(game, name, -radiation_level(game["rads"].get(name, 0))[2])
 
@@ -734,7 +859,7 @@ def sickness_day(game, indoors):
             continue
         if days <= 0:
             del game["sick"][name]
-            print(f"{name}的{disease}好了。")
+            print_routine(f"{name}的{disease}好了。")
         else:
             game["sick"][name][1] = days
 
@@ -898,9 +1023,11 @@ def new_game():
 
 
 def setup(game):
+    new_screen()
     choose_difficulty(game)
     unit = ask_number("距离单位: 1. 公里  2. 英里  ", 1, 2)
     game["unit"] = "公里" if unit == 1 else "英里"
+    new_screen()
     print("\n核战争已经过去二十年了。")
     print("你被赶出了密苏里州独立城地下的避难所。")
     print(f"你要一个人开车, 沿着当年拓荒者走过的俄勒冈小道, "
@@ -918,6 +1045,7 @@ def setup(game):
     write_diary(game, f"{leader}被赶出了独立城地下的避难所, 一个人踏上了俄勒冈小道。")
     roll_weather(game)   # 出发这天的天气
 
+    new_screen()   # 先看出发前的提示, 按回车再进商店 (像原版那样)
     print("\n出发前可以在营地买东西。")
     print("提示: 每人每天要吃食物、喝 1 份水, 车每天要用燃料。子弹可以打猎, 也可以防身。"
           "天冷时每人要有一套冬衣。")
@@ -954,6 +1082,7 @@ def shop(game, can_sell=False):
     """商店。can_sell=True 表示在路上的据点里, 还可以把东西卖掉换钱 (出发前的营地只能买)"""
     items = list(PRICES)
     while True:
+        new_screen()   # 每买一样, 商店的画面都重新画一遍 (钱和车上的东西都变了)
         print(f"\n------ 商店 ------  你有 {game['money']} 块钱")
         print(f"车上: {show_weight(game, load_of(game))} / {show_weight(game, CAR_CAPACITY)}, "
               f"还能装 {show_weight(game, max(0, CAR_CAPACITY - load_of(game)))}")
@@ -969,6 +1098,7 @@ def shop(game, can_sell=False):
         print("0. 离开商店")
         choice = ask_number("买什么? ", 0, len(items) + 1 if can_sell else len(items))
         if choice == 0:
+            new_screen()   # 走出商店, 把商店的画面换掉
             return
         if choice == len(items) + 1:
             sell(game)
@@ -989,6 +1119,7 @@ def sell(game):
     """在据点卖东西换钱。卖掉的东西也会让车变轻"""
     items = list(PRICES)
     share = MERCHANT_SELL_SHARE if skilled(game, "商人") else SELL_SHARE
+    new_screen()
     print(f"\n------ 卖东西 ------  据点的人只给买价的 {share}%")
     merchant = skilled(game, "商人")
     if merchant:
@@ -1070,7 +1201,10 @@ def health_bar(h):
 def show_party(game):
     """查看队伍: 每个人的详细情况, 还有物资大概能撑多久。不花时间"""
     print("\n========== 队伍状态 ==========")
-    for name, h in game["party"].items():
+    for i, (name, h) in enumerate(game["party"].items()):
+        if i and i % PARTY_PAGE == 0 and can_animate() and can_clear_screen():   # 有头像的话, 一页放不下所有人
+            new_screen()
+            print("\n========== 队伍状态 (接上页) ==========")
         tags = []
         if name == game["leader"]:
             tags.append("主角")
@@ -1111,6 +1245,7 @@ def show_party(game):
     if game["dead"]:
         print(f"路上失去的人: {'、'.join(game['dead'])}")
 
+    new_screen()   # 人看完了, 换一个画面看物资
     print("\n---------- 物资还能撑多久 ----------")
     s = game["supplies"]
     people = len(game["party"])
@@ -1163,9 +1298,10 @@ def pass_day(game, health_bonus=0, indoors=False, traveling=False):
         s["食物"] -= food_need
     else:
         change -= round(10 * (food_need - s["食物"]) / food_need)
+        # 头一天挨饿是新消息 (一直往前开会停下来, 好让玩家想办法); 早就吃光了的话, 再说一遍只是例行消息
+        (print if s["食物"] else print_routine)(f"食物不够了, {everyone(game)}在挨饿!")
         s["食物"] = 0
         hungry = True
-        print(f"食物不够了, {everyone(game)}在挨饿!")
 
     cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
     water_need = people * (1 + extra_water) + cholera * CHOLERA_WATER
@@ -1174,8 +1310,8 @@ def pass_day(game, health_bonus=0, indoors=False, traveling=False):
         s["水"] -= water_need
     else:
         change -= round(15 * (water_need - s["水"]) / water_need)
+        (print if s["水"] else print_routine)(f"干净的水不够了, {everyone(game)}渴得受不了, 只能喝路边的脏水!")
         s["水"] = 0
-        print(f"干净的水不够了, {everyone(game)}渴得受不了, 只能喝路边的脏水!")
 
     change_all_health(game, change)
     cold_people = freeze(game, cold_health)
@@ -1189,7 +1325,7 @@ def pass_day(game, health_bonus=0, indoors=False, traveling=False):
         rads = spot[4] if indoors else spot[3]
         for name in game["party"]:
             irradiate(game, name, rads)
-        print(colored(f"{spot[2]}辐射偏高, {everyone(game)}又受了 {rads} 点辐射。", "紫"))
+        print_routine(colored(f"{spot[2]}辐射偏高, {everyone(game)}又受了 {rads} 点辐射。", "紫"))
     radiation_damage(game)
 
     # 生病: 已经病了的人养病, 再看看今天有没有人病倒
@@ -1205,31 +1341,388 @@ def pass_day(game, health_bonus=0, indoors=False, traveling=False):
 
 
 def travel(game):
+    """每天的菜单里的「继续前进」: 能换画面的时候, 像原版一样一直往前开; 不能换画面的时候 (比如跑测试), 只开一天"""
+    if KEEP_DRIVING and can_clear_screen():
+        drive_on(game)
+    else:
+        drive_one_day(game)
+
+
+def out_of_fuel(game):
+    """燃料够不够按现在的速度开一天"""
+    return game["supplies"]["燃料"] < PACES[game["pace"]][2]
+
+
+def drive_one_day(game, animate=True):
+    """开一天车: 路过的地方、路上的事、一天的吃喝, 都在这里。animate=False 是不播这一天的动画 (一直往前开的时候, 动画另外一直在播)"""
     s = game["supplies"]
     _, km, fuel_need, pace_health = PACES[game["pace"]]
     weather = game["weather"]
     speed = WEATHER[weather][0]
     if speed == 0:
-        drive_animation(game, moving=False)
+        if animate:
+            drive_animation(game, moving=False)
         print(f"\n{weather}太大了, 车根本开不动, {everyone(game)}只能躲在车里等了一天。")
         pass_day(game, indoors=True)
         return
-    if s["燃料"] < fuel_need:
+    if out_of_fuel(game):
         print("\n燃料不够, 车开不动了! 试试换慢一点的速度, 或者去搜刮废墟找燃料。")
         return
     s["燃料"] -= fuel_need
-    drive_animation(game)
+    if animate:
+        drive_animation(game)
     km = round((km + random.randint(-10, 10)) * speed)
     km = min(km, TOTAL_DISTANCE - game["distance"])   # 最后一段路不多算
     game["distance"] += km
     if speed < 1:
-        print(f"\n{weather}里车开不快, 只往前开了 {show_distance(game, km)}。")
+        print_routine(f"\n{weather}里车开不快, 只往前开了 {show_distance(game, km)}。")
     else:
-        print(f"\n车往前开了 {show_distance(game, km)}。")
+        print_routine(f"\n车往前开了 {show_distance(game, km)}。")
     check_places(game)
     if game["distance"] < TOTAL_DISTANCE:   # 已经到了终点 (比如坐木筏漂到了), 就不会再遇到路上的事
         random_event(game, km)
     pass_day(game, pace_health, traveling=True)   # 一天结束: 吃喝、更新健康、换成明天的天气
+
+
+def drive_on(game):
+    """像原版一样一直往前开: 上面的动画一直在动, 车一天一天往前走, 下面的日期、路程这些跟着变。
+    路上出了事, 就说一说 (要做决定的让玩家选), 玩家按了回车以后接着开。
+    到了地方 (地标、河、据点、辐射热点)、玩家自己按了回车, 或者燃料不够、人都没了、到了终点, 车才停下来, 回到每天的菜单"""
+    # 在终端里先换成「按一个键就读一个键」: 开车时按的键不会显示在画面上, 一按就知道
+    old_settings = start_reading_keys() if can_read_keys() else None
+    screen["driving"] = True   # 开车的时候, 例行消息不用印出来, 下面的状态栏都看得到
+    frame = screen["frame"]
+    try:
+        stop_pressed(0)   # 之前按的键不算
+        clear_screen()
+        while True:
+            gui_update(game)         # 网页版的图形界面: 告诉网页今天的状态
+            wide = use_dashboard()   # 窗口够大就用大画面 (每天看一次, 窗口拉大拉小也跟得上)
+            stuck = WEATHER[game["weather"]][0] > 0 and out_of_fuel(game)   # 燃料不够, 车开不动了
+            if not stuck:
+                rows, _, moving = drive_screen(game, frame, wide)
+                builtins.print(redraw(rows) + "\x1b[J", flush=True)
+                screen["unread"] = False
+                # 一天的动画: 一帧一帧地画 (只重画动画那几行), 每画一帧都看看玩家有没有按键, 按了马上停 (这一天还没开完, 不算)
+                for _ in range(DRIVE_DAY_FRAMES):
+                    frame += 1
+                    screen["frame"] = frame
+                    if can_animate():
+                        rows, _, moving = drive_screen(game, frame, wide)
+                        builtins.print("\x1b[?25l" + redraw(rows[:moving]), end="", flush=True)
+                    if stop_pressed(ANIMATION_DELAY):
+                        return
+            # 这一天开完了: 动画 (大画面的话是整个方框) 留着, 擦掉下面的字, 路上发生的事写在下面 (像原版那样车还在画面上)
+            rows, keep, _ = drive_screen(game, frame, wide)
+            if keep:
+                builtins.print("\x1b[?25h" + redraw(rows[:keep]) + "\n\x1b[J", end="")
+            else:
+                clear_screen()
+            screen["room"] = screen_size()[1] - keep >= 12   # 下面放得下一件事 (大概 10 行) 才写在下面, 不然换新画面
+            weather = game["weather"]
+            places = len(game["visited"])
+            drive_one_day(game, animate=False)
+            if stuck or not game["party"] or game["distance"] >= TOTAL_DISTANCE:
+                return
+            if len(game["visited"]) > places:   # 今天到了新的地方: 像原版那样停下来, 回到每天的菜单
+                return
+            now = game["weather"]   # 明天的天气
+            if now != weather and now in WARN_WEATHER:
+                print(f"\n天气变了: {colored(now, weather_color(now))}。{WEATHER[now][-1]}。")
+            if screen["unread"]:   # 路上出了事: 等玩家看完、按了回车, 再接着开
+                new_screen()
+    finally:
+        screen["driving"] = False
+        builtins.print("\x1b[?25h", end="", flush=True)
+        stop_reading_keys(old_settings)
+
+
+def redraw(rows):
+    """回到屏幕左上角, 一行一行盖掉原来的字。每行后面加一个 \x1b[K (擦掉这一行后面剩下的旧字):
+    新的一行比原来的短 (比如中文字多了, 字的个数就少了), 不擦的话后面会留着旧字"""
+    return "\x1b[H" + "\x1b[K\n".join(rows) + "\x1b[K"
+
+
+def drive_frame(game, frame):
+    """一直往前开的时候, 动画的第 frame 帧: 天气跟着变, 暴风雪里、没燃料时车停着"""
+    moving = WEATHER[game["weather"]][0] > 0 and not out_of_fuel(game)
+    return road_scene(frame, game["pace"] if moving else 0, game["weather"], len(game["party"]))
+
+
+def drive_screen(game, frame, wide):
+    """一直往前开的画面 (像原版那样), 返回 (一行一行的字, 留着的前几行, 动画占了前几行):
+    大画面是一个分成几块的方框, 下面一句怎么停车; 普通的画面是动画、怎么停车、状态栏"""
+    how = "点一下屏幕或者按回车" if IN_BROWSER else "按回车"
+    hint = colored(f"   ({how}停下来, 看看情况)", "灰")
+    if wide:
+        box = dashboard_lines(game, drive_frame(game, frame), car_word(game, moving=True))
+        return box + ["", hint], len(box), 1 + SCENE_HEIGHT   # 动画在方框里, 上面还有一行边
+    rows = drive_frame(game, frame) if can_animate() else []
+    if GUI:   # 网页版的图形界面: 状态在网页的面板里, 停车有按钮, 这里只画动画
+        return rows, len(rows), len(rows)
+    return rows + ["", hint, ""] + drive_status(game), len(rows), len(rows)
+
+
+def drive_status(game):
+    """一直往前开的时候, 动画下面的状态栏 (像原版那样), 返回一行一行的字:
+    日期、天气、每个人怎么样、吃的喝的还够几天、下一站、走了多远, 还有要注意的事"""
+    s = game["supplies"]
+    weather = game["weather"]
+    people = len(game["party"])
+    lines = [f"日期: {date_text(game)} (第 {game['day']} 天)   天气: {colored(weather, weather_color(weather))}  "
+             f"{show_temperature(game, game['temperature'])}"]
+
+    # 每个人: 名字 健康 (病) (辐射), 一行放不下就分两行
+    members = []
+    for name, h in game["party"].items():
+        words = [(name, None), (health_word(h), health_color(h))]
+        if name in game["sick"]:
+            words.append((game["sick"][name][0], "红"))
+        rads = game["rads"].get(name, 0)
+        if radiation_level(rads)[2]:   # 辐射到了会掉血的程度才写
+            words.append((f"辐射{rads}", "紫"))
+        members.append(words)
+    row, used = [], 0
+    for words in members:
+        width = text_width(" ".join(word for word, _ in words)) + 2
+        if row and used + width > SCENE_WIDTH - 6:
+            lines.append(("队员: " if len(lines) == 1 else "      ") + "  ".join(row))
+            row, used = [], 0
+        row.append(" ".join(colored(word, color) for word, color in words))
+        used += width
+    lines.append(("队员: " if len(lines) == 1 else "      ") + "  ".join(row))
+
+    # 食物、水、燃料还够几天 (天冷天热、有人得霍乱要吃喝得多一些, 这里按平常算), 只剩 3 天以内是红的
+    cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
+    per_day = {"食物": people * RATIONS[game["ration"]][1], "水": people + cholera * CHOLERA_WATER,
+               "燃料": PACES[game["pace"]][2]}
+    supplies = []
+    for item, need in per_day.items():
+        days = s[item] // need
+        supplies.append(f"{item} {s[item]} " + colored(f"够 {days} 天", "红" if days <= 3 else None))
+    lines.append("  ".join(supplies))
+
+    name, km = next_place(game)
+    lines.append(f"下一站: {name}, 还有 {show_distance(game, km - game['distance'])}")
+    percent = game["distance"] * 100 // TOTAL_DISTANCE
+    lines.append(f"已走 {show_distance(game, game['distance'])}, 还剩 "
+                 f"{show_distance(game, TOTAL_DISTANCE - game['distance'])}  "
+                 f"{colored(progress_bar(game['distance'], TOTAL_DISTANCE, 10), '青')} {percent}%")
+
+    # 天天都有、开车的时候不会专门说的事: 放在最后一行提醒
+    notes = []
+    if hotspot_here(game):
+        notes.append(colored("辐射偏高", "紫"))
+    if s["食物"] == 0:
+        notes.append(colored("没吃的了", "红"))
+    if s["水"] == 0:
+        notes.append(colored("没水了", "红"))
+    if temperature_level(game["temperature"])[5] and s["冬衣"] < people:
+        notes.append(colored("有人没冬衣在受冻", "红"))
+    if notes:
+        lines.append("注意: " + "  ".join(notes))
+    return lines
+
+
+# ---------- 大画面 (像原版 CD 版那样, 一个画面分成几块) ----------
+# +-- 废土之旅 ----------------------------+-- 状态 ------------+
+# | 动画 (11 行)                           | 日期、天气、下一站、 |
+# +-- 路线图 -------------------------------+ 物资、队伍……       |
+# | 路线图 (3 行)                          |                    |
+# +-- 最近的事 -----------------------------+                    |
+# | 旅行日记最后几条 (5 行)                 |                    |
+# +----------------------------------------+--------------------+
+# 方框只用英文字符画 (中文的「─」这类线在有的终端里占两格, 会对不齐)
+
+# 大小见 SCENE_WIDTH 下面的 DASH_LEFT 这几个
+
+
+def screen_size():
+    """屏幕 (终端窗口) 放得下几列、几行字。网页版里 run_in_browser.py 会换成问网页"""
+    size = shutil.get_terminal_size((80, 24))
+    return size.columns, size.lines
+
+
+def use_dashboard():
+    """用不用大画面: 设置里没关掉、能换画面, 而且窗口够大 (网页版的图形界面自己有面板, 不用)"""
+    if GUI or not (DASHBOARD and can_clear_screen()):
+        return False
+    columns, rows = screen_size()
+    return columns > DASHBOARD_WIDTH and rows >= DASHBOARD_ROWS
+
+
+def visible_width(text):
+    """一段字在屏幕上占几格 (颜色的控制字符不占地方)"""
+    return text_width(re.sub(r"\x1b\[[\d;]*m", "", text))
+
+
+def fit(text, width):
+    """把一段字补上空格, 正好占 width 格; 太长就切掉 (切的时候颜色就不要了)"""
+    size = visible_width(text)
+    if size > width:
+        text = wrap_text(re.sub(r"\x1b\[[\d;]*m", "", text), width)[0]
+        size = text_width(text)
+    return text + " " * (width - size)
+
+
+def dashboard_border(left_title=None, right_title=None, right=None):
+    """方框的一条横线, 线上可以写标题。right 不是 None 的话, 横线只画左边一栏, 右边一栏这一行写 right"""
+    def line(title, width):
+        words = f"-- {colored(title, '黄', bold=True)} " if title else ""
+        return words + "-" * (width - visible_width(words))
+    if right is None:
+        return "+" + line(left_title, DASH_LEFT) + "+" + line(right_title, DASH_RIGHT) + "+"
+    return "+" + line(left_title, DASH_LEFT) + "+" + fit(right, DASH_RIGHT) + "|"
+
+
+def dashboard_lines(game, scene, car):
+    """大画面, 一行一行的字。scene 是动画的一帧, car 是车现在怎么样 (在开、停着……)"""
+    panel = status_panel(game, car)
+    left = list(scene) + [None] + route_map(game) + [None] + recent_events(game)   # None 是左边一栏里的横线
+    titles = iter(["路线图", "最近的事"])
+    rows = [dashboard_border("废土之旅", "状态")]
+    for words, right in zip(left, panel):
+        if words is None:
+            rows.append(dashboard_border(next(titles), right=right))
+        else:
+            rows.append("|" + fit(words, DASH_LEFT) + "|" + fit(right, DASH_RIGHT) + "|")
+    rows.append(dashboard_border())
+    return rows
+
+
+def gui_update(game):
+    """网页版的图形界面用: 告诉网页现在的状态 (日期、物资、队伍……), 让网页画面板。
+    在电脑上什么都不做; 网页版里 run_in_browser.py 会换掉它"""
+
+
+def show_scene(game):
+    """网页版图形界面的每天的菜单上面: 只画车停着的样子 (状态都在网页的面板里)"""
+    scene = road_scene(screen["frame"], game["pace"], game["weather"], len(game["party"]), dust=False)
+    print("\n" + "\n".join(scene))
+
+
+def show_dashboard(game):
+    """每天的菜单上面的大画面: 车停着, 动画停在开车停下来的那一帧"""
+    scene = road_scene(screen["frame"], game["pace"], game["weather"], len(game["party"]), dust=False)
+    print("\n".join(dashboard_lines(game, scene, car_word(game, moving=False))))
+
+
+def car_word(game, moving):
+    """状态栏最后一行: 车现在怎么样"""
+    if WEATHER[game["weather"]][0] == 0:
+        return colored(f"开不动 ({game['weather']})", "红")
+    if out_of_fuel(game):
+        return colored("没燃料了", "红")
+    return colored("在开", "绿") if moving else "停着"
+
+
+def status_panel(game, car):
+    """大画面右边一栏的状态 (正好 DASH_ROWS 行): 日期天气、下一站、物资还够几天、队伍、要注意的事"""
+    s = game["supplies"]
+    weather = game["weather"]
+    temperature = game["temperature"]
+    people = len(game["party"])
+    left = TOTAL_DISTANCE - game["distance"]
+    name, km = next_place(game)
+    kind = " (据点)" if name in [n for n, _ in OUTPOSTS.values()] else " (要过河)" if name in RIVERS else ""
+    rows = [
+        " " + colored(f"{date_text(game)} (第 {game['day']} 天)", "青", bold=True),
+        f" 天气: {colored(weather, weather_color(weather))}  {show_temperature(game, temperature)} "
+        f"{colored(temperature_level(temperature)[1], temperature_color(temperature))}",
+        "",
+        f" 下一站: {name}{kind}",
+        f"   还有 {show_distance(game, km - game['distance'])}",
+        f" 已走 {show_distance(game, game['distance'])}, 还剩 {show_distance(game, left)}",
+        "",
+    ]
+    cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
+    per_day = {"食物": people * RATIONS[game["ration"]][1], "水": people + cholera * CHOLERA_WATER,
+               "燃料": PACES[game["pace"]][2]}
+    for item, need in per_day.items():
+        days = s[item] // need
+        rows.append(f" {item} {s[item]} {MEASURES[item]}  " + colored(f"够 {days} 天", "红" if days <= 3 else None))
+    rows += [
+        f" 子弹 {s['子弹']}  药品 {s['药品']}  排辐剂 {s['排辐剂']}",
+        f" 零件 {s['零件']}  冬衣 {s['冬衣']}  钱 {game['money']}",
+        f" 载重 {show_weight(game, load_of(game))} / {show_weight(game, CAR_CAPACITY)}",
+        "",
+        f" 口粮: {RATIONS[game['ration']][0]}   速度: {PACES[game['pace']][0]}",
+    ]
+    for member, h in game["party"].items():   # 最多 4 个人
+        words = f" {member} {colored(f'{health_word(h)} {h}', health_color(h))}"
+        if member in game["sick"]:
+            words += " " + colored(game["sick"][member][0], "红")
+        rads = game["rads"].get(member, 0)
+        if radiation_level(rads)[2]:
+            words += " " + colored(f"辐射{rads}", "紫")
+        rows.append(words)
+    rows += [""] * (DASH_ROWS - 2 - len(rows))
+
+    notes = []   # 天天都有的事, 开车的时候不会专门说
+    spot, ahead = hotspot_here(game), next_hotspot(game)
+    if spot:
+        notes.append(colored("辐射偏高", "紫"))
+    elif ahead and ahead[0] - game["distance"] <= HOTSPOT_WARNING:
+        notes.append(colored(f"{show_distance(game, ahead[0] - game['distance'])}后辐射偏高", "紫"))
+    if s["食物"] == 0:
+        notes.append(colored("没吃的", "红"))
+    if s["水"] == 0:
+        notes.append(colored("没水", "红"))
+    if temperature_level(temperature)[5] and s["冬衣"] < people:
+        notes.append(colored("有人受冻", "红"))
+    if game["seeds"]:
+        notes.append(colored("带着种子", "绿"))
+    rows.append((" 注意: " + "  ".join(notes)) if notes else "")
+    rows.append(f" 车: {car}")
+    return rows
+
+
+def route_map(game):
+    """路线图 (3 行): 一条路, 走过的是 =, 没走的是 -, 上面标着据点 (F)、河 (~)、地标 (^)、辐射热点 (*), 车 (>) 在走到的地方"""
+    width = DASH_LEFT - 2
+    track = [("=", "青") if (i + 1) * TOTAL_DISTANCE / width <= game["distance"] else ("-", "灰")
+             for i in range(width)]
+
+    def column(km):
+        return min(width - 1, int(km * width / TOTAL_DISTANCE))
+
+    for km, (place, _) in LANDMARKS.items():   # 后标的盖住先标的: 地标 < 辐射热点 < 河 < 据点 < 车
+        if place not in RIVERS:
+            track[column(km)] = ("^", None)
+    for start, end, *_ in HOTSPOTS:
+        for i in range(column(start), column(end) + 1):
+            track[i] = ("*", "紫")
+    for km, (place, _) in LANDMARKS.items():
+        if place in RIVERS:
+            track[column(km)] = ("~", "蓝")
+    for km in OUTPOSTS:
+        track[column(km)] = ("F", "黄")
+    track[column(game["distance"])] = (">", "绿")
+    line = ""
+    for symbol, color in track:
+        line += colored(symbol, color, bold=symbol == ">")
+    percent = f"已走 {game['distance'] * 100 // TOTAL_DISTANCE}%"
+    gap = width - text_width("独立城" + DESTINATION + percent)
+    middle = " " * (gap // 2) + percent + " " * (gap - gap // 2)
+    legend = (f"{colored('>', '绿', bold=True)} 你在这里  {colored('F', '黄')} 据点  {colored('~', '蓝')} 河  "
+              f"^ 地标  {colored('*', '紫')} 辐射热点")
+    return [" " + line, " 独立城" + middle + DESTINATION, " " + legend]
+
+
+def recent_events(game):
+    """旅行日记的最后几条, 正好 DASH_EVENT_ROWS 行。太长的一条分成几行; 放不下的旧的就不放 (不会只放半条)"""
+    rows = []
+    for line in reversed(game["diary"]):   # 从最新的一条往回放
+        found = re.match(r"(\S+) \(第 \d+ 天\), 已走 [^:]+: (.*)", line)
+        words = f"{found[1]} {found[2]}" if found else line
+        parts = wrap_text(words, DASH_LEFT - 2)
+        lines = [" " + parts[0]] + ["   " + part for part in wrap_text("".join(parts[1:]), DASH_LEFT - 4) if part]
+        if len(rows) + len(lines) > DASH_EVENT_ROWS:
+            if not rows:   # 最新的一条自己就放不下, 只放前面几行
+                rows = lines[:DASH_EVENT_ROWS]
+            break
+        rows = lines + rows
+    return rows + [""] * (DASH_EVENT_ROWS - len(rows))
 
 
 def rest(game):
@@ -1272,7 +1765,7 @@ def hunt(game):
     print(f"\n{you(game)}拿着枪出去打猎, 远处有一只{animal}……")
     print("按下回车后, 屏幕上会出现一个英文词。看到后马上把它打出来, 再按一次回车, 越快越好!")
     print("(记得先切换成英文输入法)")
-    input("准备好了就按回车……")
+    wait_enter("准备好了就按回车……")
     print(f"\n    >>> {colored(word, '黄', bold=True)} <<<\n")
     start = time.time()
     typed = input("快打: ").strip().lower()
@@ -1384,12 +1877,18 @@ def use_medicine(game, name):
 
 
 def change_ration(game):
-    print("\n口粮: 1. 少  2. 普通  3. 饱")
+    print(f"\n口粮 (现在是{RATIONS[game['ration']][0]}):")
+    for number, (name, per_person, health) in RATIONS.items():
+        if health < 0:
+            note = f", {everyone(game)}会挨饿, 每天掉 {-health} 点健康, 也更容易生病"
+        else:
+            note = f", 每天恢复 {health} 点健康"
+        print(f"{number}. {name}: 每人每天吃 {per_person} 份食物{note}")
     game["ration"] = ask_number("选哪个? ", 1, 3)
 
 
 def change_pace(game):
-    print("\n速度:")
+    print(f"\n速度 (现在是{PACES[game['pace']][0]}):")
     for number, (name, km, fuel, health) in PACES.items():
         if health > 0:
             note = f", {everyone(game)}比较轻松"
@@ -1429,6 +1928,7 @@ def check_places(game):
     for km, name, intro, kind in sorted(places):
         if not reached(game, km, name):
             continue
+        new_screen()           # 每到一个地方都换一个画面
         if name in PICTURES:   # 先看一眼那里的样子
             show_picture(*PICTURES[name])
         if kind == "热点":
@@ -1465,6 +1965,7 @@ def offer_recruit(game, place, km=None):
     name, job = RECRUITS[place]
     while name in game["party"] or name in game["dead"]:   # 跟主角或别人重名就加个 2
         name += "2"
+    new_screen()   # 看完据点的介绍, 换个画面见见这里的人
     if len(game["party"]) >= MAX_PARTY:
         print(f"这里有个叫 {name} 的{job}也想往西走, 可惜你们的车已经坐满了。")
         return
@@ -1518,6 +2019,7 @@ def cross_river(game, place):
         if fare:
             print(f"4. 坐渡船 (要 {fare} 块钱, 你有 {game['money']} 块。最安全, 可能要排队)")
         choice = ask_number("怎么过河? ", 1, 4 if fare else 3)
+        new_screen()
         if choice == 1:
             ford_river(game, place, depth)
         elif choice == 2:
@@ -1627,6 +2129,7 @@ def capsize(game, place, how):
 def choose_last_road(game, km):
     """到了达尔斯, 选最后一段路怎么走。km 是达尔斯离起点几公里"""
     left = show_distance(game, TOTAL_DISTANCE - km)
+    new_screen()
     print(f"\n从{LAST_ROAD_FROM}到{DESTINATION}还剩最后 {left}。当年的拓荒者在这里有两种走法:")
     print("1. 扎木筏顺着哥伦比亚河漂下去: 不要钱、不用燃料, 两天就到;")
     print("   可是河上有急流, 撞上礁石会丢东西, 还可能有人掉进河里")
@@ -1656,6 +2159,7 @@ def raft_trip(game, km):
         if not game["party"]:
             return
         if number == RAPIDS // 2 + 1:   # 漂了一半, 天黑了, 靠岸过一夜
+            new_screen()
             print(f"\n天黑了, {you(game)}把木筏拴在岸边过夜。")
             pass_day(game)
             if not game["party"]:
@@ -1680,6 +2184,7 @@ def shoot_rapid(game, number):
     rocks = [True, True, True]
     for lane in random.sample(range(3), random.randint(1, 2)):   # 一两条水道能过
         rocks[lane] = False
+    new_screen()   # 先让玩家看完上一段 (按了回车, 急流才出现, 才开始算时间)
     print(f"\n{title('急流')}第 {number} 段急流!")
     print("      1        2        3")   # 数字正好在三条水道的正中间
     for row in range(2):
@@ -1937,6 +2442,7 @@ def random_event(game, km):
     这样开得慢不会因为在路上的天数多, 就遇到更多倒霉事"""
     chance = EVENT_CHANCE_PER_100KM * km / 100 * DIFFICULTIES[game["difficulty"]][2] / 100
     if game["party"] and random.random() < chance:
+        event_screen()
         random.choice(EVENTS)(game)
 
 
@@ -1945,6 +2451,7 @@ def random_event(game, km):
 def arrive(game):
     """到达俄勒冈城, 根据路上的情况决定是哪个结局。返回结局的名字 (比如"完美结局"), 记最高分时要用"""
     last_day = game["day"] - 1
+    new_screen()
     play_music("到达")
     show_picture(CITY_ART, "绿")
     print(f"\n{date_text(game, last_day)}, {you(game)}到达了{DESTINATION}! 一共用了 {last_day} 天。")
@@ -2234,6 +2741,13 @@ atexit.register(stop_music)   # 游戏关掉的时候 (包括按 Ctrl+C), 把音
 SCENE_WIDTH = 60
 SCENE_HEIGHT = 11
 
+# 大画面 (见 dashboard_lines) 的大小
+DASH_LEFT = SCENE_WIDTH                           # 左边一栏多宽 (跟动画一样宽)
+DASH_RIGHT = DASHBOARD_WIDTH - DASH_LEFT - 3      # 右边一栏多宽 (三条竖线各占一格)
+DASH_MAP_ROWS = 3
+DASH_EVENT_ROWS = 5
+DASH_ROWS = SCENE_HEIGHT + 1 + DASH_MAP_ROWS + 1 + DASH_EVENT_ROWS   # 方框里面有几行 (右边一栏也是这么多行)
+
 
 def can_animate():
     """能不能播动画、显示画面: 设置里没关掉, 而且是在真正的终端里或者网页版里"""
@@ -2287,8 +2801,10 @@ def scene_slice(tile, offset):
 
 
 def play_frames(frames, delay=None):
-    """一帧一帧地播动画: 画完一帧, 用控制字符 \\x1b[NA 把光标往上移 N 行, 下一帧盖掉上一帧"""
+    """一帧一帧地播动画: 画完一帧, 用控制字符 \\x1b[NA 把光标往上移 N 行, 下一帧盖掉上一帧。
+    动画不算新消息 (一直往前开的时候, 每天都有动画, 不能因为它停下来)"""
     enable_ansi()
+    before = dict(screen)
     print("\x1b[?25l", end="")   # 先把光标藏起来, 不然它会在画面上一闪一闪
     try:
         print()
@@ -2297,8 +2813,11 @@ def play_frames(frames, delay=None):
                 print(f"\x1b[{len(rows)}A", end="")   # 光标往上移回画面顶上, 用新的一帧盖掉旧的
             print("\n".join(rows), flush=True)
             time.sleep(ANIMATION_DELAY if delay is None else delay)
+        # 擦掉动画下面剩下的旧字 (\x1b[J): 一直往前开的时候, 动画是盖在昨天的画面上的, 下面还有昨天的状态
+        print("\x1b[J", end="")
     finally:
         print("\x1b[?25h", end="", flush=True)   # 不管怎么结束 (包括按 Ctrl+C), 都要把光标显示回来
+        screen.update(before)
 
 
 def enable_ansi():
@@ -2403,7 +2922,7 @@ def weather_layer(canvas, frame, moved, weather, bottom):
         draw(canvas, y, 0, text, color, behind=(how != "雾"))
 
 
-def road_scene(frame, speed, weather="晴", people=1):
+def road_scene(frame, speed, weather="晴", people=1, dust=True):
     """赶路的第 frame 帧。speed 是车速 (1 慢, 2 中, 3 快, 0 是车停着), 越快背景退得越快。
     weather 是今天的天气, people 是车上有几个人"""
     moved = frame * speed
@@ -2418,7 +2937,7 @@ def road_scene(frame, speed, weather="晴", people=1):
     car = car_art(people)
     for i, part in enumerate(car):
         draw(canvas, 6 + i, CAR_X, part, solid=True)
-    if speed:
+    if speed and dust:   # 车在开, 车尾扬起尘土 (dust=False 是画一个停着的样子)
         draw(canvas, 8, CAR_X + len(car[2].rstrip()), DUST[frame % len(DUST)])
     return canvas_lines(canvas)
 
@@ -2997,13 +3516,17 @@ def show_help():
 开局先选难度 ({difficulties}): 越难, 一开始的钱越少, 路上出事、生病的机会越多。
 
 每天可以选一件事做:
-  继续前进  开车赶路, 要用燃料。开得越快越费燃料, 人也越累
+  继续前进  开车赶路, 要用燃料。开得越快越费燃料, 人也越累。
+            车会像原版那样一直往前开, 路上出了事会说一声, 看完接着开; 到了地方就停下来。
+            想停下来休息、用药、看看情况, 就按回车 (网页版点一下屏幕)
   休息一天  躲在车里养伤养病, 不怕风吹雨打
   搜刮废墟  也许能找到物资, 也可能碰上危险
   打猎      屏幕上出现英文词就飞快打出来, 越快肉越多 (记得先切换成英文输入法)
   用药      药品治病治伤, 排辐剂排辐射, 自己选给谁用
   还可以改变口粮和速度、查看队伍、看旅行日记、存档。这几样不花时间
-
+""")
+    new_screen()   # 一页放不下, 分成三页
+    print(f"""
 路上要注意:
   - 每人每天都要吃要喝。天热要多喝水, 天冷要多吃东西, 还得每人一套冬衣
   - 车最多装 {capacity_kg} 公斤 ({capacity_lb} 磅), 人也算在里面, 装不下就拿不了。燃料最重, 要算好在哪里补给
@@ -3018,13 +3541,18 @@ def show_help():
   - 到了达尔斯, 最后一段路可以扎木筏顺着哥伦比亚河漂下去 (要躲急流里的礁石), 也可以交过路费走巴洛路
   - 带上队友更安全; 一个人走省吃省喝, 可生病了没人照顾
   - 3 月出发天冷, 7 月出发天热, 4~6 月最好走
-
+""")
+    new_screen()
+    print(f"""
 走到{DESTINATION}才算分: 活下来的人越多、越健康分越高, 剩下的物资和钱也能换成分。
 最后再按难度乘一下: {scores}。主菜单的「最高分」里记着前 {HIGH_SCORES} 名。
 
-游戏有音乐。不想听: 网页版点输入框旁边的「♪」; 在电脑上玩, 把游戏文件开头「游戏设置」里的 MUSIC 改成 False。
+游戏有音乐。不想听: 网页版点右上角的「♪」; 在电脑上玩, 把游戏文件开头「游戏设置」里的 MUSIC 改成 False。
+
+在电脑的终端里玩, 窗口够大的时候 (拉大到 101 列、28 行以上), 每天的菜单和开车的画面
+会变成一个分成几块的大画面: 动画、状态、路线图、最近发生的事都在一起。网页版本来就有这些面板。
 """)
-    input("按回车回到主菜单……")
+    wait_enter("按回车回到主菜单……")
 
 
 # ========== 主菜单和主循环 ==========
@@ -3032,7 +3560,9 @@ def show_help():
 def main():
     """主菜单: 开始新游戏、继续游戏、看说明, 或者退出。一局玩完会回到这里"""
     enable_ansi()   # 颜色和动画都要用控制字符, Windows 的终端要先打开这个开关
+    screen["unread"] = False   # 刚打开游戏, 屏幕上还没有要看的字
     while True:
+        new_screen()
         play_music("主菜单")
         height = title_screen()
         saved = load_game()
@@ -3058,12 +3588,14 @@ def main():
                 play(saved)
             else:
                 print("\n还没有存档, 先开始一局新游戏吧。")
-                input("按回车回到主菜单……")
+                wait_enter("按回车回到主菜单……")
         elif choice == 3:
+            new_screen()
             show_help()
         elif choice == 4:
+            new_screen()
             show_high_scores()
-            input("按回车回到主菜单……")
+            wait_enter("按回车回到主菜单……")
         else:
             stop_music()
             print("\n下次再见!")
@@ -3079,6 +3611,7 @@ def play(game):
 
     while True:
         if not game["party"]:
+            new_screen()
             play_music("全军覆没")
             show_picture(WIPEOUT_ART, "灰")
             print("\n" + title("结局: 全军覆没", "红"))
@@ -3088,23 +3621,32 @@ def play(game):
             ending = arrive(game)
             break
 
-        show_status(game)
-        print("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 用药  "
-              "6. 改变口粮  7. 改变速度  8. 查看队伍  9. 旅行日记  10. 存档")
+        new_screen()   # 每天的菜单是一个画面: 上面是状态 (窗口够大就用大画面), 下面是选项
+        if GUI:
+            show_scene(game)
+        elif use_dashboard():
+            show_dashboard(game)
+        else:
+            show_status(game)
+        print("1. 继续前进  2. 休息一天  3. 搜刮废墟  4. 打猎  5. 用药")
+        print("6. 改变口粮  7. 改变速度  8. 查看队伍  9. 旅行日记  10. 存档")
         choice = ask_number("你要做什么? ", 1, 10)
         if choice == 10:
             save_game(game)
             if ask_number("1. 继续玩  2. 回到主菜单  ", 1, 2) == 2:
                 return
             continue
+        new_screen()   # 做的事换一个画面
         actions[choice](game)
 
     delete_save()
+    new_screen()   # 看完结局, 再看一遍旅行日记, 最后算分
     show_diary(game)
     if ending:
+        new_screen()
         record_score(game, ending)
     print("\n====== 游戏结束 ======")
-    input("按回车回到主菜单……")
+    wait_enter("按回车回到主菜单……")
 
 
 if __name__ == "__main__":

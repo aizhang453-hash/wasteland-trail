@@ -1495,9 +1495,9 @@ class GameTest(unittest.TestCase):
             game["weather"] = "辐射风暴"
             random.seed(1)   # 两次过急流, 礁石的位置要一样
             screen = io.StringIO()
-            # 只比较字: 网页版里还会画头像这些画面, 先关掉
+            # 只比较字: 网页版里还会画头像这些画面、会清屏换画面, 先关掉
             with redirect_stdout(screen), mock.patch("builtins.input", lambda p="": "1"), \
-                    mock.patch.object(w, "ANIMATION", False):
+                    mock.patch.object(w, "ANIMATION", False), mock.patch.object(w, "SCREENS", False):
                 w.show_status(game)
                 w.show_party(game)
                 w.title_screen()
@@ -2025,6 +2025,331 @@ class GameTest(unittest.TestCase):
         new_game = ["1", "1", "2", "1", "小明", "1", "5", "0"]   # 开始新游戏、确定、普通、公里、名字、男、5 月、不买东西
         self.run_main(new_game + ["10", "2", "5"])
         self.assertEqual(w.load_game()["leader"], "小明")
+
+    # ---------- 换画面和一直往前开 ----------
+
+    def screens(self, wide=False):
+        """假装能换画面 (在终端或网页里)。按键还是整行读 (测试替玩家打字用的是假的 input), 不播动画。
+        wide=True 是窗口很大 (120 x 40, 用大画面), 不然是 Mac 终端默认的 80 x 24"""
+        w.screen.update(unread=False, driving=False, room=True, frame=0)
+        size = (120, 40) if wide else (80, 24)
+        return mock.patch.multiple(w, can_clear_screen=lambda: True, can_animate=lambda: False,
+                                   screen_size=lambda: size)
+
+    def test_new_screen_waits_until_words_are_read(self):
+        """换画面前, 屏幕上还有没看过的字, 就先等玩家按回车; 玩家刚回答过问题、或者只有例行消息, 就直接清屏"""
+        prompts = []
+        screen = io.StringIO()
+        with self.screens(), mock.patch("builtins.input", lambda p="": prompts.append(p) or "1"), \
+                redirect_stdout(screen):
+            w.print("出事了!")
+            w.new_screen()
+            self.assertEqual(prompts, ["按回车继续……"])
+            w.new_screen()                               # 刚清过屏, 没有新字
+            w.print_routine("车往前开了 100 公里。")      # 例行消息不用等
+            w.new_screen()
+            w.print("要怎么办?")
+            w.ask_number("选哪个? ", 1, 2)               # 回答了问题, 屏幕上的字就看过了
+            w.new_screen()
+        self.assertEqual(prompts, ["按回车继续……", "选哪个? "])
+        self.assertEqual(screen.getvalue().count("\x1b[H\x1b[2J"), 4)
+
+    def test_no_new_screens_when_not_in_terminal(self):
+        """不能换画面的时候 (跑测试、用管道输入), 不清屏, 也不会多问一句按回车"""
+        screen = io.StringIO()
+        with mock.patch("builtins.input", lambda p="": self.fail("不该问玩家")), redirect_stdout(screen):
+            w.print("出事了!")
+            w.new_screen()
+        self.assertEqual(screen.getvalue(), "出事了!\n")
+
+    def skip_to(self, game, km):
+        """把车挪到 km 公里的地方, 前面的地方都算去过了"""
+        game["distance"] = km
+        places = [(start, name) for start, _, name, *_ in w.HOTSPOTS]
+        places += [(k, name) for k, (name, _) in list(w.LANDMARKS.items()) + list(w.OUTPOSTS.items())]
+        game["visited"] = [name for k, name in places if k <= km]
+
+    def drive(self, game, stop_on_day=None, animate=False, wide=False):
+        """选「继续前进」, 车一直往前开, 到了第 stop_on_day 天玩家按回车停下来。返回屏幕上的字, 问过的问题记在 self.prompts"""
+        start = game["day"]
+        self.frames = 0   # 车开的时候, 一共看了几次玩家有没有按键 (一帧一次)
+
+        def stop_pressed(seconds):
+            self.frames += 1
+            self.assertLess(game["day"], start + 60, "开了太久还没停")
+            return stop_on_day is not None and game["day"] >= stop_on_day
+
+        self.prompts = []
+
+        def answer(prompt=""):
+            self.prompts.append(prompt)
+            if "买什么" in prompt:
+                return "0"
+            return "2" if "买卖东西" in prompt else "1"
+        screen = io.StringIO()
+        with self.screens(wide), mock.patch.object(w, "stop_pressed", stop_pressed), \
+                mock.patch.object(w, "can_animate", lambda: animate), \
+                mock.patch("builtins.input", answer), redirect_stdout(screen):
+            w.travel(game)
+        return screen.getvalue()
+
+    def quiet_road(self):
+        """一路上不出事、不生病、天气一直晴"""
+        return mock.patch.multiple(w, EVENT_CHANCE_PER_100KM=0, catch_diseases=lambda *args: None,
+                                   DIRTY_WATER_CHANCE=0, roll_weather=lambda game: None)
+
+    def test_keep_driving_until_player_presses(self):
+        """车一天一天自己往前开, 玩家自己按回车才停。
+        天天都有的例行消息 (辐射在身体里作怪) 开车的时候不印出来, 状态栏里看得到"""
+        game = new_test_game()
+        self.skip_to(game, 515)   # 刚过卡尼堡, 下一个地方是 808 公里的灰洞, 两天开不到
+        game["rads"] = {"A": 30}
+        with self.quiet_road():
+            text = self.drive(game, stop_on_day=3)
+        self.assertEqual(game["day"], 3)
+        self.assertNotIn("灰洞", game["visited"])
+        # 出发时清一次以前按的键, 开了 2 天, 第 3 天的第一帧就停了
+        self.assertEqual(self.frames, 1 + 2 * w.DRIVE_DAY_FRAMES + 1)
+        self.assertEqual(self.prompts, [])
+        self.assertIn("(按回车停下来, 看看情况)", text)
+        self.assertIn("A 良好 辐射", text)
+        self.assertNotIn("辐射在A的身体里作怪", text)
+        self.assertNotIn("车往前开了", text)
+
+    def test_stop_at_a_place(self):
+        """像原版那样, 到了地方就停下来 (看完那里的介绍, 回到每天的菜单)"""
+        game = new_test_game()
+        self.skip_to(game, 515)
+        with self.quiet_road():
+            text = self.drive(game)   # 玩家一直不按回车
+        self.assertIn("灰洞", game["visited"])
+        self.assertLess(game["distance"], 808 + 116)   # 开到灰洞的那一天就停了
+        self.assertIn("经过了【灰洞】", text)
+        self.assertEqual(self.prompts, [])   # 停下来以后才等玩家按回车 (在每天的菜单前面)
+
+    def test_stop_right_away(self):
+        """一出发就按回车, 车马上停下来, 一天都没过"""
+        game = new_test_game()
+        self.skip_to(game, 515)
+        with self.quiet_road():
+            self.drive(game, stop_on_day=1)
+        self.assertEqual((game["day"], game["distance"]), (1, 515))
+
+    def test_things_happen_but_car_keeps_going(self):
+        """路上出了事, 写在动画下面, 玩家按了回车接着开"""
+        game = new_test_game()
+        self.skip_to(game, 515)
+        with self.quiet_road(), mock.patch.multiple(w, EVENT_CHANCE_PER_100KM=1000, EVENTS=[w.bad_water]):
+            text = self.drive(game, stop_on_day=3)
+        self.assertEqual(game["day"], 3)
+        self.assertEqual(text.count("【水被污染】"), 2)
+        self.assertEqual(self.prompts, ["按回车继续……"] * 2)
+
+    def test_warn_about_bad_weather(self):
+        """天气变成酸雨这些在外面伤人的天气, 提醒一下 (要不要停下来躲进车里, 玩家自己决定); 一直在下就不再说"""
+        game = new_test_game()
+        self.skip_to(game, 515)
+        with self.quiet_road(), mock.patch.object(w, "roll_weather", lambda game: game.update(weather="酸雨")):
+            text = self.drive(game, stop_on_day=4)
+        self.assertEqual(game["day"], 4)
+        self.assertEqual(text.count("天气变了: 酸雨。在外面会受伤"), 1)
+
+    def test_blizzard_while_driving(self):
+        """暴风雪里车开不动, 每天说一声, 玩家按了回车接着等"""
+        game = new_test_game()
+        self.skip_to(game, 515)
+        game["weather"] = "灰色暴风雪"
+        with self.quiet_road():
+            text = self.drive(game, stop_on_day=3)
+        self.assertEqual((game["day"], game["distance"]), (3, 515))
+        self.assertEqual(text.count("车根本开不动"), 2)
+
+    def test_stop_driving_without_fuel(self):
+        game = new_test_game()
+        self.skip_to(game, 515)
+        game["supplies"]["燃料"] = w.PACES[2][2] * 2   # 只够开两天
+        with self.quiet_road():
+            text = self.drive(game)
+        self.assertEqual(game["day"], 3)
+        self.assertIn("燃料不够, 车开不动了", text)
+
+    def test_driving_screen_animates(self):
+        """开着动画: 车一直在动, 每一帧都画在屏幕最上面, 状态栏在动画下面, 一天一换"""
+        game = new_test_game()
+        self.skip_to(game, 515)
+        with self.quiet_road():
+            text = self.drive(game, stop_on_day=3, animate=True)
+        self.assertEqual(text.count("\x1b[?25l\x1b[H"), 2 * w.DRIVE_DAY_FRAMES + 1)   # 两天, 再加第 3 天画的第一帧
+        self.assertEqual(text.count("日期: "), 3)   # 第 1、2、3 天的状态栏
+        self.assertIn("(@)", text)
+        self.assertTrue(text.endswith("\x1b[?25h"))   # 停下来以后把光标显示回来
+
+    def test_dashboard_only_in_big_windows(self):
+        """窗口够大 (比 100 列宽、至少 28 行) 才用大画面; 不能换画面、或者设置里关掉了, 也不用"""
+        for size, can_clear, turned_on, expected in [((120, 40), True, True, True), ((101, 28), True, True, True),
+                                                     ((100, 40), True, True, False), ((120, 27), True, True, False),
+                                                     ((120, 40), False, True, False), ((120, 40), True, False, False)]:
+            with self.subTest(size=size, can_clear=can_clear, turned_on=turned_on), \
+                    mock.patch.multiple(w, screen_size=lambda: size, can_clear_screen=lambda: can_clear,
+                                        DASHBOARD=turned_on):
+                self.assertEqual(w.use_dashboard(), expected)
+
+    def test_dashboard_fits(self):
+        """大画面每一行都正好 100 格宽 (中文算两格), 人多、病多、辐射高、名字长、用英里也一样"""
+        game = new_test_game()
+        game["party"] = {"队长": 100, "玛莎": 55, "埃迪2": 30, "汉娜2": 5}
+        game["sick"] = {"玛莎": ["伤口感染", 3], "埃迪2": ["过度劳累", 3], "汉娜2": ["痢疾", 2]}
+        game["rads"] = {"玛莎": 99, "埃迪2": 60, "汉娜2": 30}
+        game["supplies"].update({"食物": 1500, "水": 400, "冬衣": 0})
+        game.update(unit="英里", temperature=-5, distance=950, seeds=True, money=12345)
+        for i in range(8):
+            w.write_diary(game, "很长很长的一件事, " * (i + 1))
+        for weather in w.WEATHER:
+            game["weather"] = weather
+            rows = w.dashboard_lines(game, w.road_scene(7, 2, weather, 4), w.car_word(game, moving=True))
+            self.assertEqual(len(rows), 2 + w.DASH_ROWS)
+            for row in rows:
+                self.assertEqual(w.visible_width(row), w.DASHBOARD_WIDTH, row)
+            self.assertEqual("车: 开不动" in "\n".join(rows), weather == "灰色暴风雪")
+        text = "\n".join(rows)
+        for words in ["-- 废土之旅", "-- 路线图", "-- 最近的事", "-- 状态", "汉娜2 危险 5 痢疾 辐射30",
+                      "注意: 辐射偏高  有人受冻  带着种子"]:
+            self.assertIn(words, text)
+
+    def test_route_map(self):
+        """路线图: 走过的路是 =, 车 (>) 在走到的地方, 6 个据点 (F) 和 5 条河 (~) 都标出来"""
+        game = new_test_game()
+        for distance in [0, 1500, w.TOTAL_DISTANCE]:
+            game["distance"] = distance
+            track = w.route_map(game)[0][1:]
+            self.assertEqual(len(track), w.DASH_LEFT - 2)
+            car = track.index(">")
+            self.assertEqual(car, min(len(track) - 1, distance * len(track) // w.TOTAL_DISTANCE))
+            self.assertNotIn("-", track[:car])
+            self.assertNotIn("=", track[car:])
+        game["distance"] = 0
+        track = w.route_map(game)[0]
+        self.assertEqual(track.count("F"), len(w.OUTPOSTS))
+        self.assertEqual(track.count("~"), len(w.RIVERS))
+
+    def test_recent_events(self):
+        """最近的事: 日记的最后几条, 只写日期和事, 太长的分成几行, 正好 5 行"""
+        game = new_test_game()
+        self.assertEqual(w.recent_events(game), [""] * w.DASH_EVENT_ROWS)
+        w.write_diary(game, "到了卡尼堡。")
+        self.assertEqual(w.recent_events(game)[0], " 4月1日 到了卡尼堡。")
+        w.write_diary(game, "很长" * 40)
+        rows = w.recent_events(game)
+        self.assertEqual(len(rows), w.DASH_EVENT_ROWS)
+        self.assertEqual(rows[0], " 4月1日 到了卡尼堡。")
+        self.assertTrue(rows[1].startswith(" 4月1日 很长") and rows[2].startswith("   ") and rows[3].startswith("   "))
+        w.write_diary(game, "又长" * 60)   # 放不下前面两条了: 只放最新的一条, 不会只放半条
+        rows = w.recent_events(game)
+        self.assertTrue(rows[0].startswith(" 4月1日 又长"))
+        self.assertNotIn("很长", "".join(rows))
+        w.write_diary(game, "特别长" * 200)   # 一条就放不下: 只放前面几行
+        rows = w.recent_events(game)
+        self.assertEqual(len(rows), w.DASH_EVENT_ROWS)
+        for row in rows:
+            self.assertLessEqual(w.text_width(row), w.DASH_LEFT)
+
+    def test_drive_on_dashboard(self):
+        """窗口很大: 一直往前开用大画面, 每帧只重画方框上面那几行 (边和动画), 每行后面都擦掉剩下的旧字"""
+        game = new_test_game()
+        self.skip_to(game, 515)
+        with self.quiet_road():
+            text = self.drive(game, stop_on_day=3, animate=True, wide=True)
+        self.assertEqual(game["day"], 3)
+        # 头两天: 开始时整个画一次、每一帧画上面几行、开完再画一次; 第三天整个画一次, 画了一帧就按回车了
+        self.assertEqual(text.count("-- 废土之旅"), 2 * (1 + w.DRIVE_DAY_FRAMES + 1) + 1 + 1)
+        self.assertEqual(text.count("-- 状态"), text.count("-- 废土之旅"))
+        self.assertEqual(text.count("-- 路线图"), 2 * 2 + 1)   # 只有每天开始和结束时整个画
+        self.assertIn("\x1b[K\n|", text)
+        self.assertIn("(按回车停下来, 看看情况)", text)
+
+    def test_menu_dashboard(self):
+        """窗口很大: 每天的菜单上面是大画面, 车停着"""
+        game = new_test_game()
+        with self.screens(wide=True), mock.patch("builtins.input", lambda p="": "10" if "做什么" in p else "2"), \
+                redirect_stdout(io.StringIO()) as screen:
+            w.play(game)
+        text = screen.getvalue()
+        self.assertIn("-- 废土之旅", text)
+        self.assertIn("车: 停着", text)
+        self.assertNotIn("==== 4月1日", text)   # 普通画面的状态栏没出来
+
+    def test_running_out_of_food_is_news_only_the_first_day(self):
+        """头一天没吃的是新消息 (要等玩家看), 之后天天都没吃的, 就只是例行消息 (开车时状态栏里提醒)"""
+        game = new_test_game()
+        game["supplies"]["食物"] = 3
+        with no_new_diseases(), redirect_stdout(io.StringIO()) as screen:
+            w.screen["unread"] = False
+            w.pass_day(game)
+            self.assertTrue(w.screen["unread"])
+            w.screen["unread"] = False
+            w.pass_day(game)
+            self.assertFalse(w.screen["unread"])
+        self.assertEqual(screen.getvalue().count("食物不够了"), 2)
+        self.assertIn("没吃的了", w.drive_status(game)[-1])
+
+    def test_drive_status_fits_on_screen(self):
+        """车自己开的时候, 动画下面的状态栏每一行都不超过画面的宽度 (60 格), 人多了分两行"""
+        game = new_test_game()
+        game["party"] = {"队长": 100, "玛莎": 55, "埃迪2": 30, "汉娜": 10}
+        game["sick"] = {"玛莎": ["伤口感染", 3], "埃迪2": ["过度劳累", 3], "汉娜": ["痢疾", 2]}
+        game["rads"] = {"玛莎": 99, "埃迪2": 60, "汉娜": 30}
+        game["supplies"].update({"食物": 300, "水": 200, "燃料": 100})
+        game["unit"] = "英里"
+        game["supplies"]["冬衣"] = 0
+        game["temperature"] = -5
+        game["distance"] = 950   # 在辐射热点里
+        lines = w.drive_status(game)
+        for line in lines:
+            self.assertLessEqual(w.text_width(line), w.SCENE_WIDTH, line)
+        self.assertTrue(lines[1].startswith("队员: 队长 良好"))
+        self.assertIn("汉娜 危险 痢疾 辐射30", lines[2])
+        self.assertEqual(lines[-1], "注意: 辐射偏高  有人没冬衣在受冻")
+        self.assertIn("食物 300 够 37 天  水 200 够 50 天  燃料 100 够 50 天", lines)
+
+    def test_diary_turns_pages(self):
+        """换画面的时候, 日记太长就一页一页地看"""
+        game = new_test_game()
+        for i in range(25):
+            w.write_diary(game, f"第 {i} 件事")
+        prompts = []
+        with self.screens(), mock.patch("builtins.input", lambda p="": prompts.append(p) or ""), \
+                redirect_stdout(io.StringIO()) as screen:
+            w.show_diary(game)
+        self.assertEqual(prompts, ["按回车看下一页……"] * 2)
+        self.assertEqual(screen.getvalue().count("旅行日记 (接上页)"), 2)
+        self.assertIn("第 24 件事", screen.getvalue())
+
+    def test_party_turns_pages(self):
+        """换画面的时候, 查看队伍一页放两个人 (每个人都有头像), 物资另外一页"""
+        game = new_test_game()
+        prompts = []
+        with self.screens(), mock.patch.object(w, "can_animate", lambda: True), \
+                mock.patch.object(w.time, "sleep", lambda seconds: None), \
+                mock.patch("builtins.input", lambda p="": prompts.append(p) or ""), \
+                redirect_stdout(io.StringIO()) as screen:
+            w.show_party(game)
+        self.assertEqual(prompts, ["按回车继续……"] * 2)
+        self.assertEqual(screen.getvalue().count("队伍状态 (接上页)"), 1)
+
+    def test_random_play_with_screens(self):
+        """能换画面、车一直往前开的时候, 乱玩 60 局也不能报错 (车时不时被叫停)"""
+        for seed in range(60):
+            with self.subTest(seed=seed):
+                random.seed(seed)
+                stops = random.Random(seed + 1000)
+                with self.screens(), real_car(), \
+                        mock.patch.object(w, "stop_pressed", lambda seconds: seconds > 0 and stops.random() < 0.01), \
+                        mock.patch("builtins.input", random_player(random.Random(seed))), \
+                        redirect_stdout(io.StringIO()):
+                    try:
+                        w.main()
+                    except StopGame:
+                        pass
 
 
 if __name__ == "__main__":

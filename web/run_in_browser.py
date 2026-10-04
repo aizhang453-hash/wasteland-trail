@@ -7,6 +7,10 @@
 - 暂停: 动画要一帧一帧地停, 用的是 worker.js 准备好的 sleepMs (在后台线程里真的停下来等)。
 - 音乐: 网页里的 Python 放不了声音, 所以只告诉网页现在该放哪几首 (网页用 music 文件夹里的 .wav 文件放)。
 - 主菜单的小动画: 等玩家输入时 Python 停着动不了, 所以把一整圈画面交给网页, 网页自己一帧一帧地换, 玩家一回答就停。
+- 一直往前开的时候怎么停车: 网页里读不了键盘, 玩家点屏幕或者按回车时网页记一笔, 游戏每画一帧来问一下。
+- 屏幕多大: 网页按屏幕算好字号, 记下一屏放得下几列、几行字, 游戏看够不够用大画面。
+- 图形界面: 按钮、状态面板、地图、旅行日记都是网页画的。游戏每次问问题以前, 这里把「现在的状态」和「在问什么、能选什么」
+  整理好 (见 gui.py) 交给网页; 车自己往前开的时候, 每天也交一次状态。游戏印出来的字照样显示在网页中间的屏幕上。
 """
 
 import json
@@ -17,6 +21,11 @@ import time
 import js   # 网页那边 (worker.js) 给 Python 用的东西
 
 import wasteland_trail as game_file
+
+try:
+    import gui   # 整理状态和问题 (gui.py, worker.js 会把它放在游戏旁边)
+except ImportError:   # 浏览器里还留着旧版的 worker.js (它不会放 gui.py), 就还用以前的样子
+    gui = None
 
 game_file.SAVE_FILE = "/home/pyodide/savegame.json"   # worker.js 会把浏览器里的存档放在这里
 game_file.HIGH_SCORE_FILE = "/home/pyodide/highscores.json"   # 最高分榜也一样
@@ -60,11 +69,119 @@ def show_title_loop(frames, height):
                               "delay": game_file.TITLE_ANIMATION_DELAY}))
 
 
+def stop_pressed(seconds):
+    """一直往前开的时候: 停 seconds 秒 (一帧), 再问网页玩家有没有点屏幕或者按回车"""
+    sys.stdout.flush()   # 先让网页看到今天的状态
+    time.sleep(seconds)
+    ask = getattr(js, "stopRequested", None)   # 浏览器里还留着旧版的 worker.js 时没有它, 那就只在出事的时候停
+    return bool(ask and ask())
+
+
+def screen_size():
+    """网页一屏放得下几列、几行字 (网页按屏幕大小算好的)。问不到就当是手机竖着拿的大小"""
+    ask = getattr(js, "screenSize", None)
+    size = ask() if ask else ""
+    if not size or size.startswith("0,"):
+        return 61, 28
+    columns, rows = size.split(",")
+    return int(columns), int(rows)
+
+
+# ---------- 图形界面 ----------
+
+shown = {"game": None, "state": None, "text": []}   # 现在在玩的这一局、上次交给网页的状态、上一个问题以后游戏印出来的字
+real_print = game_file.print
+real_ask_number = game_file.ask_number
+real_wait_enter = game_file.wait_enter
+real_setup = game_file.setup
+real_play = game_file.play
+real_drive_on = game_file.drive_on
+
+
+def to_page(message):
+    js.guiToPage(json.dumps(message, ensure_ascii=False))
+
+
+def send_state(game=None):
+    """把这一局现在的状态交给网页 (跟上次一样就不交了)。没在玩 (在主菜单) 的时候交一个空的"""
+    game = game or shown["game"]
+    state = gui.game_state(game_file, game) if game else None
+    text = json.dumps(state, ensure_ascii=False)
+    if text != shown["state"]:
+        shown["state"] = text
+        to_page({"what": "state", "state": state})
+
+
+def recording_print(*args, **kwargs):
+    """游戏印字照常印, 再记下来 (网页的按钮上写什么, 要从这些字里找)"""
+    real_print(*args, **kwargs)
+    shown["text"].append(kwargs.get("sep", " ").join(str(arg) for arg in args))
+
+
+def asking(question):
+    """游戏要问问题了: 先交状态, 再告诉网页在问什么"""
+    send_state()
+    to_page({"what": "question", "question": question})
+    shown["text"].clear()
+
+
+def ask_number(prompt, low, high, idle=None):
+    asking(gui.number_question("\n".join(shown["text"]), prompt, low, high))
+    try:
+        return real_ask_number(prompt, low, high, idle)
+    finally:
+        to_page({"what": "question", "question": None})   # 问完了
+
+
+def wait_enter(prompt="按回车继续……"):
+    asking(gui.enter_question(prompt))
+    try:
+        return real_wait_enter(prompt)
+    finally:
+        to_page({"what": "question", "question": None})
+
+
+def setup(game):
+    shown["game"] = game   # 开局买东西的时候, 面板上也看得到钱和物资
+    return real_setup(game)
+
+
+def play(game):
+    shown["game"] = game
+    try:
+        return real_play(game)
+    finally:
+        shown["game"] = None
+        send_state()
+
+
+def drive_on(game):
+    """车一直往前开: 告诉网页 (网页把按钮换成「停下来」)"""
+    to_page({"what": "driving", "driving": True})
+    try:
+        return real_drive_on(game)
+    finally:
+        to_page({"what": "driving", "driving": False})
+        send_state(game)
+
+
+if gui and getattr(js, "guiToPage", None):   # 浏览器里还留着旧版的 worker.js 时没有这些, 就还用以前的样子
+    game_file.GUI = True
+    game_file.print = recording_print
+    game_file.ask_number = ask_number
+    game_file.wait_enter = wait_enter
+    game_file.setup = setup
+    game_file.play = play
+    game_file.drive_on = drive_on
+    game_file.gui_update = send_state
+
 game_file.save_game = save_game
 game_file.delete_save = delete_save
 game_file.save_high_scores = save_high_scores
 game_file.start_playing = start_playing
 game_file.show_title_loop = show_title_loop
+game_file.stop_pressed = stop_pressed
+game_file.screen_size = screen_size
 time.sleep = lambda seconds: js.sleepMs(int(seconds * 1000))
 
 try:

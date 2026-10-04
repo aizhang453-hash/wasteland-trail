@@ -7,12 +7,14 @@ import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyod
 
 let control;   // 共用内存的前两个数字: [0] 是「玩家输入好了没有」(1 是好了), [1] 是输入的字有几个字节
 let letters;   // 共用内存后面的部分: 玩家输入的字 (UTF-8)
+let flags;     // 另一小块共用内存: [0] 车自己往前开的时候, 玩家点了屏幕或者按了回车 (1 是要停下来); [1] [2] 网页一屏放得下几列、几行字
 const sleeper = new Int32Array(new SharedArrayBuffer(4));   // 专门用来「停一会儿」的一小块内存
 
 self.onmessage = async (event) => {
-  const { inputMemory, savedGame, savedScores } = event.data;
+  const { inputMemory, flagsMemory, savedGame, savedScores } = event.data;
   control = new Int32Array(inputMemory, 0, 2);
   letters = new Uint8Array(inputMemory, 8);
+  flags = flagsMemory ? new Int32Array(flagsMemory) : null;
 
   postMessage({ type: "status", text: "正在下载 Python (第一次大约 10 MB, 请稍等)……" });
   const pyodide = await loadPyodide();
@@ -33,11 +35,16 @@ self.onmessage = async (event) => {
   self.saveScoresToPage = (text) => postMessage({ type: "scores", text: text });
   self.musicToPage = (text) => postMessage({ type: "music", text: text });
   self.loopToPage = (text) => postMessage({ type: "loop", text: text });
+  self.stopRequested = () => (flags ? Atomics.exchange(flags, 0, 0) : 0);   // 看一眼要不要停, 顺便清掉
+  self.guiToPage = (text) => postMessage({ type: "gui", text: text });   // 图形界面: 状态、在问什么、车在不在开
+  self.screenSize = () => (flags ? `${Atomics.load(flags, 1)},${Atomics.load(flags, 2)}` : "");   // 「几列,几行」
 
   postMessage({ type: "status", text: "正在载入游戏……" });
   const game = await (await fetch("../wasteland_trail.py", { cache: "no-cache" })).text();
   const starter = await (await fetch("run_in_browser.py", { cache: "no-cache" })).text();
+  const gui = await (await fetch("gui.py", { cache: "no-cache" })).text();
   pyodide.FS.writeFile("/home/pyodide/wasteland_trail.py", game);
+  pyodide.FS.writeFile("/home/pyodide/gui.py", gui);
   if (savedGame) {
     pyodide.FS.writeFile("/home/pyodide/savegame.json", savedGame);
   }
