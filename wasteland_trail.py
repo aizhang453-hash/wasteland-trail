@@ -38,7 +38,7 @@ HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "high
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v2.4"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v2.4.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -315,6 +315,7 @@ ANIMALS = {"变异野兔": (10, 25), "双头鹿": (30, 60), "辐射野猪": (50,
 ANIMATION = True          # 不想看就改成 False
 ANIMATION_FRAMES = 24     # 一共几帧
 ANIMATION_DELAY = 0.06    # 每帧停几秒 (24 帧大约 1.5 秒)
+PICTURE_DELAY = 0.03      # 地标、据点这些画一行一行地画出来, 每行停几秒
 
 # 音乐: 用代码做的老式游戏机音乐, 放在 music 文件夹里 (做音乐的程序是 music/make_music.py, 想改曲子就改它)。
 # 只在真正的终端里和网页版里放 (跑测试时不放)。网页版上还有一个「♪」按钮可以关掉
@@ -720,6 +721,11 @@ def sickness_day(game, indoors):
             game["sick"][name][1] = days
 
 
+def sick_odds(game, chance):
+    """生病受伤的机会按难度变: 简单少一些, 困难多一些"""
+    return chance * DIFFICULTIES[game["difficulty"]][3] / 100
+
+
 def catch_diseases(game, hungry, cold_people, traveling):
     """每天看看有没有人生病: 健康越差越容易病; 挨饿、受冻、开太快、辐射高, 也会更容易病"""
     for name in list(game["party"]):
@@ -741,8 +747,7 @@ def catch_diseases(game, hungry, cold_people, traveling):
             chance += extra
             if disease:
                 likely += [disease, disease]   # 跟这个情况有关的病更容易得
-        chance = chance * DIFFICULTIES[game["difficulty"]][3] / 100   # 难度越高越容易生病
-        if random.random() < chance:
+        if random.random() < sick_odds(game, chance):
             get_sick(game, name, random.choice(likely))
 
 
@@ -1173,7 +1178,7 @@ def pass_day(game, health_bonus=0, indoors=False, traveling=False):
     sickness_day(game, indoors)
     if dirty_water:
         for name in list(game["party"]):
-            if random.random() < DIRTY_WATER_CHANCE:
+            if random.random() < sick_odds(game, DIRTY_WATER_CHANCE):
                 get_sick(game, name, random.choice(["霍乱", "痢疾"]))
     catch_diseases(game, hungry, cold_people, traveling)
 
@@ -1231,7 +1236,7 @@ def scavenge(game):
         print("什么有用的都没找到。")
     else:
         find_supplies(game)
-    if game["party"] and random.random() < TETANUS_CHANCE:
+    if game["party"] and random.random() < sick_odds(game, TETANUS_CHANCE):
         victim = random_member(game)
         print(f"{victim} 在废墟里被生锈的铁皮划了一道口子……")
         get_sick(game, victim, "破伤风")
@@ -1400,16 +1405,15 @@ def reached(game, km, name):
 def check_places(game):
     """路过风景地标会介绍一下, 到了据点还可以进去买东西, 开进辐射热点会提醒。
     一天可能连着经过好几个地方, 所以把它们放在一起, 按路程从近到远排好再一个个看"""
-    places = [(km, name, intro, False) for km, (name, intro) in LANDMARKS.items()]
-    places += [(km, name, intro, True) for km, (name, intro) in OUTPOSTS.items()]
-    places += [(start, name, intro, False) for start, _, name, _, _, intro in HOTSPOTS]
-    hotspots = [spot[2] for spot in HOTSPOTS]
-    for km, name, intro, can_shop in sorted(places):
+    places = [(km, name, intro, "地标") for km, (name, intro) in LANDMARKS.items()]
+    places += [(km, name, intro, "据点") for km, (name, intro) in OUTPOSTS.items()]
+    places += [(start, name, intro, "热点") for start, _, name, _, _, intro in HOTSPOTS]
+    for km, name, intro, kind in sorted(places):
         if not reached(game, km, name):
             continue
         if name in PICTURES:   # 先看一眼那里的样子
             show_picture(*PICTURES[name])
-        if name in hotspots:
+        if kind == "热点":
             play_music("热点")
             show_picture(HOTSPOT_SIGN, "紫")
             print(f"\n{you(game)}开进了{title(name, '紫')}{intro}{colored('盖革计数器响个不停, 这一带辐射偏高。', '紫')}")
@@ -1422,7 +1426,7 @@ def check_places(game):
             cross_river(game, name)
             game["distance"] = day_end   # 过了河, 接着开完今天的路
             continue
-        if not can_shop:
+        if kind == "地标":
             print(f"\n{you(game)}经过了{title(name, '青')}{intro}")
             write_diary(game, f"经过了{name}。", km)
             continue
@@ -1725,7 +1729,7 @@ def raiders(game):
             print(f"劫匪被打跑了, 但是 {victim} 中枪受伤了。")
             write_diary(game, f"遇到劫匪, 打跑了他们, 但是 {victim} 中枪受伤了。")
             hurt(game, victim, 35)
-            if random.random() < INFECTION_CHANCE:
+            if random.random() < sick_odds(game, INFECTION_CHANCE):
                 get_sick(game, victim, "伤口感染")
         return
 
@@ -1788,7 +1792,7 @@ def mutant_attack(game):
         print(f"子弹不够! {victim} 被咬伤了。")
         write_diary(game, f"遇到一群变异野狗, 子弹不够, {victim} 被咬伤了。")
         hurt(game, victim, 30)
-        if random.random() < INFECTION_CHANCE:
+        if random.random() < sick_odds(game, INFECTION_CHANCE):
             get_sick(game, victim, "伤口感染")
 
 
@@ -2131,7 +2135,10 @@ def start_playing(playlist):
         if process and process.poll() is None:
             process.terminate()
         if winsound:
-            winsound.PlaySound(None, 0)
+            try:
+                winsound.PlaySound(None, 0)
+            except RuntimeError:
+                pass
     if playlist:
         threading.Thread(target=music_thread, args=(playlist, music_now["turn"]), daemon=True).start()
 
@@ -2148,15 +2155,20 @@ def music_thread(playlist, turn):
 
 
 def play_file(path, turn):
-    """把一首放一遍, 放完 (或者换了音乐) 才回来。放不了 (没有这个文件、电脑上没有播放器) 就返回 False"""
-    if not os.path.exists(path):
+    """把一首放一遍, 放完 (或者换了音乐) 才回来。放不了 (没有这个文件、文件坏了、电脑上没有播放器或者声音设备) 就返回 False"""
+    try:
+        seconds = sound_length(path)
+    except (OSError, EOFError, wave.Error):   # 没有这个文件, 或者文件坏了
         return False
     if winsound:
         with music_lock:
             if music_now["turn"] != turn:
                 return False
-            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
-        end = time.time() + sound_length(path)
+            try:
+                winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            except RuntimeError:   # 电脑上没有能出声音的设备
+                return False
+        end = time.time() + seconds
         while time.time() < end and music_now["turn"] == turn:
             time.sleep(0.05)
         return True
@@ -2173,7 +2185,9 @@ def play_file(path, turn):
             return False
         music_now["process"] = process
     process.wait()
-    return True
+    # 放完了是 0。不是 0 又不是被我们换音乐时关掉的, 就是播放器放不了 (比如电脑上没有声音设备),
+    # 这时别再重新开它, 不然循环的背景音乐会让播放器一秒钟重启几百次
+    return process.returncode == 0 or music_now["turn"] != turn
 
 
 def music_player():
@@ -2521,9 +2535,6 @@ def raft_animation(game):
 
 # ---------- 画面: 地标、据点、结局和人 ----------
 
-PICTURE_DELAY = 0.03   # 画面一行一行地画出来, 每行停几秒
-
-
 def picture(text):
     """把一幅用三引号写的画变成一行一行的字 (去掉头尾的空行和每行后面的空格)"""
     return [line.rstrip() for line in text.strip("\n").split("\n")]
@@ -2815,10 +2826,14 @@ def text_width(text):
 def wrap_text(text, width):
     """把一段字切成好几行, 每行在终端里不超过 width 格"""
     lines = [""]
+    used = 0   # 这一行已经占了几格
     for ch in text:
-        if text_width(lines[-1] + ch) > width:
+        size = text_width(ch)
+        if used + size > width:
             lines.append("")
+            used = 0
         lines[-1] += ch
+        used += size
     return lines
 
 

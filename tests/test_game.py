@@ -1856,6 +1856,71 @@ class GameTest(unittest.TestCase):
             w.stop_music()
         self.assertEqual(calls, [("outpost.wav", 3), (None, 0)])
 
+    def test_broken_music_player_is_not_restarted(self):
+        """播放器一启动就失败 (比如电脑上没有声音设备): 不再一遍一遍地重新开它"""
+        import threading
+        failing = [sys.executable, "-c", "import sys; sys.exit(1)"]   # 假播放器: 一开就失败
+        started = []
+        real_popen = w.subprocess.Popen
+
+        def counting_popen(*args, **kwargs):
+            started.append(1)
+            return real_popen(*args, **kwargs)
+        with mock.patch.object(w, "music_player", lambda: failing), mock.patch.object(w, "winsound", None), \
+                mock.patch.object(w.subprocess, "Popen", counting_popen), \
+                mock.patch.dict(w.music_now, {"background": None, "turn": 5, "process": None}):
+            thread = threading.Thread(target=w.music_thread, args=([("title.wav", True)], 5))
+            thread.start()
+            thread.join(10)
+            still_running = thread.is_alive()
+            w.music_now["turn"] += 1   # 万一还在转, 让它停下
+        self.assertFalse(still_running)
+        self.assertEqual(len(started), 1)
+
+    def test_music_problems_do_not_print_errors(self):
+        """放不了音乐 (Windows 上没有声音设备、音乐文件坏了) 时悄悄不放, 不在游戏画面上印出报错"""
+        class NoSoundCard:
+            SND_FILENAME, SND_ASYNC = 1, 2
+
+            @staticmethod
+            def PlaySound(path, flags):
+                raise RuntimeError("Failed to play sound")
+        real_folder = w.MUSIC_FOLDER
+        with tempfile.TemporaryDirectory() as tmp:
+            broken = os.path.join(tmp, "broken.wav")
+            with open(broken, "wb") as f:
+                f.write(b"not a wav file")
+            screen, errors = io.StringIO(), io.StringIO()
+            with mock.patch.object(w, "winsound", NoSoundCard), \
+                    mock.patch.dict(w.music_now, {"background": None, "turn": 1, "process": None}), \
+                    redirect_stdout(screen), mock.patch("sys.stderr", errors):
+                self.assertFalse(w.play_file(broken, 1))                               # 文件坏了
+                self.assertFalse(w.play_file(os.path.join(tmp, "missing.wav"), 1))   # 没有这个文件
+                self.assertFalse(w.play_file(os.path.join(real_folder, "title.wav"), 1))   # 好好的文件, 可是没有声音设备
+                with mock.patch.object(w, "MUSIC_FOLDER", tmp):
+                    w.music_thread([("broken.wav", True)], 1)
+                w.music_thread([("title.wav", True)], 1)
+                w.start_playing([])
+        self.assertEqual(screen.getvalue() + errors.getvalue(), "")
+
+    def test_difficulty_changes_every_kind_of_sickness(self):
+        """难度也影响喝脏水生病、伤口感染、破伤风, 不只是平常生病"""
+        game = new_test_game()
+        game["difficulty"] = 3
+        self.assertAlmostEqual(w.sick_odds(game, 0.1), 0.13)
+        game["difficulty"] = 1
+        self.assertAlmostEqual(w.sick_odds(game, 0.1), 0.07)
+        sick = {}
+        for difficulty in [1, 2, 3]:   # 没水喝, 只能喝脏水: 普通难度 15% 的机会病倒
+            game = new_test_game()
+            game["difficulty"] = difficulty
+            game["supplies"]["水"] = 0
+            with mock.patch.object(w, "catch_diseases", lambda *args: None), \
+                    mock.patch.object(w.random, "random", lambda: 0.16), redirect_stdout(io.StringIO()):
+                w.pass_day(game)
+            sick[difficulty] = len(game["sick"])
+        self.assertEqual(sick, {1: 0, 2: 0, 3: 4})
+
     # ---------- 开始界面和主菜单 ----------
 
     def run_main(self, answers):

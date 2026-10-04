@@ -237,11 +237,14 @@
   }
 
   // ---------- 音乐: 游戏说放哪几首, 这里就用 music 文件夹里的 .wav 一首一首地放 ----------
-  // 浏览器不让网页还没被点过就出声音, 所以开头的音乐要等玩家第一次点网页或者按键时才响
+  // 浏览器不让网页还没被点过就出声音, 所以开头的音乐要等玩家第一次点网页或者按键时才响。
+  // 从头到尾只用一个播放器 (<audio>), 只换要放的文件: iPhone 上一个播放器被点过一次以后才能自己出声音,
+  // 每首都新开一个播放器的话, 后来的那些 (比如有人去世时的熄灯号) 会不响
   const musicButton = document.getElementById("music");
+  const player = new Audio();
   let musicOn = readStored(MUSIC_KEY) !== "off";
-  let playlist = [];    // 还要放的: [[文件, 是不是一直循环], ...], 第一首就是正在放的
-  let player = null;    // 正在放的 <audio>
+  let playlist = [];      // 还要放的: [[文件, 是不是一直循环], ...], 第一首就是正在放的
+  let hasTrack = false;   // 播放器里有没有放上一首
 
   function playMusic(list) {
     playlist = list;
@@ -249,21 +252,22 @@
   }
 
   function playFirst() {
-    if (player) {
-      player.onended = null;
-      player.pause();
-      player = null;
+    player.pause();
+    if (!musicOn || !playlist.length) {
+      hasTrack = false;
+      return;
     }
-    if (!musicOn || !playlist.length) return;
     const [file, loop] = playlist[0];
-    player = new Audio("music/" + file);
+    player.src = "music/" + file;
     player.loop = loop;
-    player.onended = () => {   // 放完一段, 接着放下一首 (一般是原来的背景音乐)
-      playlist.shift();
-      playFirst();
-    };
+    hasTrack = true;
     player.play().catch(() => { /* 还没被点过, 先不响 */ });
   }
+
+  player.addEventListener("ended", () => {   // 放完一段, 接着放下一首 (一般是原来的背景音乐)
+    playlist.shift();
+    playFirst();
+  });
 
   function showMusicButton() {
     musicButton.textContent = musicOn ? "♪ 开" : "♪ 关";
@@ -274,15 +278,19 @@
     musicOn = !musicOn;
     writeStored(MUSIC_KEY, musicOn ? "" : "off");
     showMusicButton();
+    if (musicOn) {   // 关着的时候要放的一小段 (比如很久以前的熄灯号) 早就过时了, 只接着放背景音乐
+      playlist = playlist.filter(([, loop]) => loop);
+    }
     playFirst();
-    answer.focus({ preventScroll: true });
+    // 在电脑上点完按钮, 把光标放回输入框, 接着打字就行; 手机上不放, 不然会弹出打字的键盘挡住画面
+    if (waiting && window.matchMedia("(pointer: fine)").matches) answer.focus({ preventScroll: true });
   });
   showMusicButton();
 
   // 玩家点了网页或者按了键: 要是音乐因为「还没被点过」没响, 现在放
   for (const kind of ["pointerdown", "keydown"]) {
     document.addEventListener(kind, () => {
-      if (musicOn && player && player.paused) player.play().catch(() => {});
+      if (musicOn && hasTrack && player.paused) player.play().catch(() => {});
     });
   }
 
