@@ -41,7 +41,7 @@ HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "high
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v3.2"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v3.3"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -52,11 +52,16 @@ TOTAL_DISTANCE = 3119   # 到俄勒冈城的总路程(公里)
 # 难度 (开局时玩家选): 编号 -> (名字, 一开始有多少钱, 路上出事的机会是平时的百分之几, 生病的机会是平时的百分之几,
 #                              得分是百分之几, 说明)
 # 「普通」就是没有难度选择以前的样子。跟原版一样, 越难得分越高
+# 目标 (用户 2026-10-04 定的): 简单 —— 第一次玩的人基本都能到; 普通 —— 第一次玩的人大概一半能到, 玩熟了的人大多能到;
+# 困难 —— 玩熟了的人也常常失败。改了数字要用 tests/balance.py 量一量 (会规划的玩家 = 玩熟了的人, 「新手」= 第一次玩的人)
 DIFFICULTIES = {
-    1: ("简单", 700, 70, 70, 50, "路上出事、生病都少一些"),
+    1: ("简单", 900, 40, 40, 50, "出事、生病少很多, 过河翻车也不会被冲走"),
     2: ("普通", 500, 100, 100, 100, "钱刚刚够用, 要精打细算"),
-    3: ("困难", 450, 130, 130, 150, "路上出事、生病都多一些"),
+    3: ("困难", 370, 140, 140, 150, "钱很紧, 路上出事、生病都多不少"),
 }
+# 在这些难度里, 过河翻车、坐木筏撞上礁石都不会有人被冲走 (第一次玩的人常常在一开始还只有自己一个人的时候,
+# 在头两条河就被冲走了, 一局一下子就结束, 太狠了)
+NO_DROWNING = [1]
 
 # 距离单位(开局时玩家选): 名字 -> 1 公里等于多少这个单位。游戏里的路程一律按公里算, 只在显示时换算
 UNITS = {"公里": 1, "英里": 0.621371}
@@ -139,7 +144,10 @@ HIGH_SCORES = 10        # 最高分榜记几名
 
 # 商店价格(每个多少钱)
 PRICES = {"食物": 1, "水": 1, "燃料": 4, "子弹": 1, "零件": 20, "药品": 15, "冬衣": 10, "排辐剂": 20}
-# 在据点卖东西: 据点的人只给买价的百分之几 (有商人帮着讲价能多拿一些)。零头不算
+# 越往西东西越贵 (照原版: 起点的东西最便宜, 每往西一个堡垒就贵一些): 据点 -> 是独立城价钱的百分之几
+OUTPOST_PRICES = {"卡尼堡": 115, "拉勒米堡": 130, "布里杰堡": 145, "霍尔堡": 160, "博伊西堡": 175, "达尔斯": 190}
+# 在据点卖东西: 据点的人只给独立城价钱的百分之几 (有商人帮着讲价能多拿一些)。零头不算。
+# 不管在哪个据点卖都一样 (不跟着越往西越贵), 不然在东边买、到西边卖就能赚钱
 SELL_SHARE = 50
 MERCHANT_SELL_SHARE = 60
 # 每种物资怎么数 (5 份食物、30 发子弹、1 套冬衣……)
@@ -177,6 +185,7 @@ TALK_TIPS = [
     "夜里睡觉要留个人守着, 这一带小偷多。",
     "旧公路的路牌早就倒光了, 认不清路的时候, 就看着太阳往西走。",
     "开得太快, 人颠得受不了, 也更费燃料。",
+    "越往西, 据点里的东西越贵。能在东边买的, 就早点买。",
 ]
 
 # ---------- 休息 ----------
@@ -433,8 +442,8 @@ MAX_PARTY = 4
 RECRUITS = {"卡尼堡": ("杰克", "老兵"), "拉勒米堡": ("玛莎", "医生"), "布里杰堡": ("埃迪", "机械师"),
             "霍尔堡": ("汉娜", "猎人"), "博伊西堡": ("本", "商人"), "达尔斯": ("罗莎", "拾荒者")}
 
-# 据点里的人加入时自带的口粮
-RECRUIT_BRINGS = {"食物": 60, "水": 40}
+# 据点里的人加入时自带的口粮 (只帮带队友的人, 一个人走还是很难)
+RECRUIT_BRINGS = {"食物": 100, "水": 80}
 
 # 职业的特长: 只要这个人还活着、在队伍里, 特长就一直有用
 SKILLS = {
@@ -1133,12 +1142,33 @@ def choose_difficulty(game):
     game["money"] = DIFFICULTIES[game["difficulty"]][1]
 
 
+def price_level(game):
+    """这里的东西是独立城价钱的百分之几: 停在据点里按 OUTPOST_PRICES (越往西越贵), 出发的独立城是 100"""
+    return OUTPOST_PRICES.get(game["here"], 100)
+
+
+def unit_price(game, item):
+    """这里一个 item 卖多少钱 (显示用, 可能有小数, 比如 1.15 块)"""
+    return f"{PRICES[item] * price_level(game) / 100:g}"
+
+
 def cost_of(game, item, amount):
-    """买 amount 个 item 要花多少钱。队伍里有商人就打八折, 有零头往上算 1 块"""
-    cost = amount * PRICES[item]
+    """买 amount 个 item 要花多少钱: 越往西越贵; 队伍里有商人就打八折; 有零头往上算 1 块"""
+    cost = amount * PRICES[item] * price_level(game)   # 先按「分」算 (1 块 = 100 分), 免得有小数算不准
     if skilled(game, "商人"):
         cost = (cost * 8 + 9) // 10
-    return cost
+    return (cost + 99) // 100
+
+
+def most_affordable(game, item, money=None):
+    """money 块钱 (不填就是身上所有的钱) 最多能买几个 item"""
+    money = game["money"] if money is None else money
+    most = money * 100 // (PRICES[item] * price_level(game))
+    while most > 0 and cost_of(game, item, most) > money:
+        most -= 1
+    while cost_of(game, item, most + 1) <= money:   # 商人打折以后能多买几个
+        most += 1
+    return most
 
 
 def sale_price(game, item, amount):
@@ -1155,12 +1185,15 @@ def shop(game, can_sell=False):
         print(f"\n------ 商店 ------  你有 {game['money']} 块钱")
         print(f"车上: {show_weight(game, load_of(game))} / {show_weight(game, CAR_CAPACITY)}, "
               f"还能装 {show_weight(game, max(0, CAR_CAPACITY - load_of(game)))}")
+        level = price_level(game)
+        if level > 100:
+            print(f"这里离独立城远了, 东西都比那里贵 {level - 100}%。")
         merchant = skilled(game, "商人")
         if merchant:
             print(f"商人{merchant}帮你讲价, 买什么都打八折。")
         for i, item in enumerate(items, 1):
             measure = MEASURES[item]
-            print(f"{i}. {item}  {PRICES[item]} 块一{measure}, 每{measure} {show_weight(game, WEIGHTS[item])}"
+            print(f"{i}. {item}  {unit_price(game, item)} 块一{measure}, 每{measure} {show_weight(game, WEIGHTS[item])}"
                   f"  (现在有 {game['supplies'][item]})")
         if can_sell:
             print(f"{len(items) + 1}. 卖东西")
@@ -1173,9 +1206,7 @@ def shop(game, can_sell=False):
             sell(game)
             continue
         item = items[choice - 1]
-        most = game["money"] // PRICES[item]
-        while cost_of(game, item, most + 1) <= game["money"]:   # 打折以后能多买几个
-            most += 1
+        most = most_affordable(game, item)
         if room_for(game, item) < most:
             most = room_for(game, item)
             print(f"车上只装得下 {most} {MEASURES[item]}{item}了。")
@@ -1189,7 +1220,7 @@ def sell(game):
     items = list(PRICES)
     share = MERCHANT_SELL_SHARE if skilled(game, "商人") else SELL_SHARE
     new_screen()
-    print(f"\n------ 卖东西 ------  据点的人只给买价的 {share}%")
+    print(f"\n------ 卖东西 ------  据点的人只给独立城价钱的 {share}%")
     merchant = skilled(game, "商人")
     if merchant:
         print(f"商人{merchant}帮你讲价, 能卖到六成的价钱。")
@@ -2736,7 +2767,10 @@ def capsize(game, place, how):
     write_diary(game, f"{how}时翻了车, 丢了不少东西。")
     if random.random() < DROWN_CHANCE:
         victim = random_member(game)
-        lose_member(game, victim, f"被{river}的急流冲走了, 再也没有上来。", f"被{river}的急流冲走了。")
+        if game["difficulty"] in NO_DROWNING:
+            print(f"{victim} 差点被急流冲走, 好在死死抓住了车门。")
+        else:
+            lose_member(game, victim, f"被{river}的急流冲走了, 再也没有上来。", f"被{river}的急流冲走了。")
     if game["party"]:
         print(f"{everyone(game)}好不容易把车拖上了对岸。")
 
@@ -2835,7 +2869,7 @@ def hit_rock(game):
     if lost:
         print(f"掉进河里冲走了: {'、'.join(lost)}。")
     victim = random_member(game)
-    if random.random() < RAPID_HIT_DROWN:
+    if random.random() < RAPID_HIT_DROWN and game["difficulty"] not in NO_DROWNING:
         lose_member(game, victim, "掉进了哥伦比亚河, 被急流冲走了。")
     else:
         print(f"{victim} 撞伤了, 还呛了几口带辐射的河水。")
@@ -4286,17 +4320,17 @@ def show_help():
     print(f"""
 路上要注意:
   - 每人每天都要吃要喝。天热要多喝水, 天冷要多吃东西, 还得每人一套冬衣
-  - 车最多装 {capacity_kg} 公斤 ({capacity_lb} 磅), 人也算在里面, 装不下就拿不了。燃料最重, 要算好在哪里补给
+  - 车最多装 {capacity_kg} 公斤 ({capacity_lb} 磅), 人也算在里面。燃料最重, 要算好在哪里补给
   - 天气按走到哪里、几月份变。坏天气车开得慢, 酸雨和辐射风暴天最好躲在车里
   - 辐射会在身体里越积越多, 只有排辐剂能排掉
-  - 有 {len(HOTSPOTS)} 段路靠近核设施, 辐射偏高 (状态栏会提前提醒)。在那里的每一天都要多受辐射,
-    躲在车里能少受一些, 开快一点能少待几天
+  - 有 {len(HOTSPOTS)} 段路靠近核设施, 辐射偏高 (状态栏会提前提醒), 开快点、躲在车里能少受些
   - 健康越差越容易生病。生病了要休息, 或者用药品治
-  - 路上要过 5 条大河。水浅可以直接开过去, 水深了就绑上空油桶浮过去 (可能翻车),
-    有的河边有渡船, 花钱最安全。春天化雪、刚下过雨, 河水都会涨, 等几天水也许会退
-  - 路上的据点能买东西, 也能把用不上的东西卖掉换钱 (只给一半的价钱); 每个据点还有一个人愿意跟你走
-  - 到了达尔斯, 最后一段路可以扎木筏顺着哥伦比亚河漂下去 (要躲急流里的礁石), 也可以交过路费走巴洛路
-  - 带上队友更安全; 一个人走省吃省喝, 可生病了没人照顾
+  - 路上要过 5 条大河: 水浅就直接开过去, 水深就绑上空油桶浮过去 (可能翻车),
+    有的河边有渡船, 花钱最安全。化雪、下雨以后河水会涨, 等几天也许会退
+  - 据点能买东西, 也能卖掉用不上的东西 (只给独立城一半的价钱)
+  - 越往西, 据点的东西越贵 ({LAST_ROAD_FROM}是独立城的 {OUTPOST_PRICES[LAST_ROAD_FROM] / 100:g} 倍), 能早买就早买
+  - 每个据点有一个人愿意跟你走。带上队友更安全; 一个人走省吃省喝, 病了没人照顾
+  - 到了{LAST_ROAD_FROM}, 可以扎木筏顺哥伦比亚河漂下去 (要躲礁石), 也可以交过路费走巴洛路
   - 3 月出发天冷, 7 月出发天热, 4~6 月最好走
 """)
     new_screen()

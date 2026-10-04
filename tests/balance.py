@@ -4,6 +4,10 @@
 运行方法: 在游戏文件夹 (wasteland-trail) 里输入 python3 tests/balance.py
 想多玩几局: python3 tests/balance.py 5000
 换个难度 (1 简单, 2 普通, 3 困难, 不写就是普通): python3 tests/balance.py 1000 3
+让第一次玩的新手来玩: python3 tests/balance.py 1000 2 新手
+
+难度的目标 (用户 2026-10-04 定的): 简单 —— 第一次玩的人基本都能到; 普通 —— 第一次玩的人大概一半能到, 玩熟了的人大多能到;
+困难 —— 玩熟了的人也常常失败。「会规划的玩家」(planner) 算玩熟了的人, 「新手」(novice) 算第一次玩的人。
 """
 
 import io
@@ -30,6 +34,9 @@ RAPID_MISTAKES = 0.2
 HUNT_MOVES = 2
 HUNT_TRIGGER = 0.5
 HUNT_HASTE = 0.05   # 准星还差几格就急着开枪 (多半打空) 的机会, 每一帧
+# 新手: 过急流时选错水道的机会、打猎时的手 (每帧按几下方向键, 对上了马上开枪的机会, 急着开枪的机会)
+NOVICE_RAPID_MISTAKES = 0.4
+NOVICE_HUNT = (1, 0.3, 0.15)
 
 
 def planner(game_box, screen, month):
@@ -80,7 +87,7 @@ def planner(game_box, screen, month):
         if "买多少" in prompt:                    # 留够前面坐渡船的钱
             most = int(prompt.split("最多")[1].split(")")[0])
             item = list(w.PRICES)[int(buying[0][0]) - 1]
-            spare = max(0, game["money"] - ferry_money(game)) // w.PRICES[item]
+            spare = w.most_affordable(game, item, max(0, game["money"] - ferry_money(game)))
             return str(min(most, spare, buying[0][1]))
         if "怎么过河" in prompt:
             place = game["visited"][-1]
@@ -132,9 +139,13 @@ def planner(game_box, screen, month):
     return answer
 
 
-def hunter_bot(game_box):
+def hunter_bot(game_box, moves=None, trigger=None, haste=None):
     """会规划的玩家打猎: 准星一下一下地挪向最近的那只动物 (跟真人在终端里按方向键一样), 对上了就开枪 (手不总是那么快);
-    肉已经多得扛不动了就回去"""
+    肉已经多得扛不动了就回去。moves、trigger、haste 不填就用上面的 HUNT_MOVES、HUNT_TRIGGER、HUNT_HASTE (新手的手慢一些)"""
+    moves = HUNT_MOVES if moves is None else moves
+    trigger = HUNT_TRIGGER if trigger is None else trigger
+    haste = HUNT_HASTE if haste is None else haste
+
     def keys(hunting):
         game = game_box[0]
         most = len(game["party"]) * w.CARRY_PER_PERSON // w.WEIGHTS["食物"]
@@ -152,7 +163,7 @@ def hunter_bot(game_box):
         target = min(alive, key=lambda animal: abs(middle(animal)[0] - row) * 2 + abs(middle(animal)[1] - col))
         top, left, height, width = w.animal_box(target)
         events = []
-        for _ in range(HUNT_MOVES):
+        for _ in range(moves):
             want_row, want_col = middle(target)
             if top <= row < top + height and left <= col < left + width:
                 break
@@ -165,10 +176,107 @@ def hunter_bot(game_box):
                 col += step
         on_target = top <= row < top + height and left <= col < left + width
         near = abs(middle(target)[1] - col) <= 6 and abs(middle(target)[0] - row) <= 2
-        if on_target and random.random() < HUNT_TRIGGER or not on_target and near and random.random() < HUNT_HASTE:
+        if on_target and random.random() < trigger or not on_target and near and random.random() < haste:
             events.append(("开枪",))
         return events
     return keys
+
+
+def novice(game_box, screen, month):
+    """第一次玩的新手: 不知道什么最要紧, 东西凭感觉买 (有时忘了买冬衣、排辐剂、零件), 不留坐渡船的钱;
+    坏天气多半照样赶路, 有人生病了不一定马上用药, 辐射很高了才打排辐剂, 吃的快没了才去打猎 (枪法一般), 水快没了有时去搜刮;
+    到了据点先补快用完的东西; 过河、路上出事、急流都凭感觉选; 据点里愿意跟着走的人都带上, 碰到要换东西的、要搭车的一半会答应"""
+    rng = random.Random(month * 1000 + random.randrange(1000))   # 新手自己拿主意用的随机数 (不打乱游戏的随机数)
+    plan = [str(DIFFICULTY), "1", "A", "1", str(month)]   # 难度、单位、名字、性别、出发月份
+    menu_visits = [0]
+    # 出发前买东西: 每样花掉一开始的钱的几成 (凭感觉, 每局不一样); 冬衣、排辐剂、零件一半会忘了买
+    shares = {"1": rng.uniform(0.15, 0.3), "2": rng.uniform(0.1, 0.25), "3": rng.uniform(0.25, 0.45),
+              "4": rng.uniform(0.05, 0.1), "6": rng.uniform(0, 0.08)}
+    for choice in ["5", "7", "8"]:
+        if rng.random() < 0.5:
+            shares[choice] = 0.05
+    shopping = list(shares)
+    buying = []
+    medicine = []
+    budget = [None]   # 这一次进商店时有多少钱 (每样按它的几成买)
+    count = [0]
+
+    def answer(prompt=""):
+        count[0] += 1
+        if count[0] > 20000:
+            raise RuntimeError(f"新手卡住了, 最后一个问题: {prompt}")
+        if "选哪一项" in prompt:
+            menu_visits[0] += 1
+            return "1" if menu_visits[0] == 1 else "5"
+        if "确定, 开始新游戏" in prompt:
+            return "1"
+        if plan:
+            return plan.pop(0)
+        game = game_box[0]
+        s, party = game["supplies"], game["party"]
+        if "要进去买卖东西" in prompt:             # 据点: 有钱的话进去, 先补快用完的 (状态栏写着够几天), 再随便买点别的
+            short = [choice for choice, item in [("2", "水"), ("1", "食物"), ("3", "燃料")] if w.days_left(game, item) < 10]
+            shopping[:] = short + [choice for choice in ["3", "1", "2"] if choice not in short and rng.random() < 0.5]
+            budget[0] = None
+            return "1" if shopping and game["money"] >= 10 else "2"
+        if "买什么" in prompt:
+            if budget[0] is None:
+                budget[0] = game["money"]
+            if shopping:
+                buying[:] = [shopping.pop(0)]
+                return buying[0]
+            return "0"
+        if "买多少" in prompt:
+            most = int(prompt.split("最多")[1].split(")")[0])
+            item = list(w.PRICES)[int(buying[0]) - 1]
+            share = shares.get(buying[0], 0.3)
+            want = w.most_affordable(game, item, int(budget[0] * share))
+            return str(min(most, want))
+        if "卖什么" in prompt or "丢什么" in prompt:
+            return "0"
+        if "怎么过河" in prompt:                  # 凭感觉: 多半直接开或者浮过去, 有时坐渡船、等一天
+            return rng.choice(["1", "1", "2", "2", "3", "4"])
+        if "走哪条路" in prompt:
+            return rng.choice(["1", "2"])
+        if "往哪边划" in prompt:
+            lanes = re.findall(r"左边(礁石|水道)  中间(礁石|水道)  右边(礁石|水道)", screen.getvalue())[-1]
+            want = "礁石" if rng.random() < NOVICE_RAPID_MISTAKES and "礁石" in lanes else "水道"
+            return str(lanes.index(want) + 1)
+        if "你怎么办" in prompt or "冲过去" in prompt:   # 劫匪、雷区、烂路: 凭感觉选
+            return rng.choice(["1", "2"])
+        if "先丢掉一些东西" in prompt:
+            return "2"
+        if "不用了" in prompt:                    # 据点里愿意跟着走的人: 带上
+            return "1"
+        if "换  2" in prompt or "加入" in prompt or "要花 2 天" in prompt:
+            return rng.choice(["1", "2"])
+        if "用哪种药" in prompt:
+            return medicine[0]
+        if "给谁用" in prompt:
+            return str(list(party).index(medicine[1]) + 1)
+        if "休息几天" in prompt:
+            return "2"
+        if "你要做什么" in prompt:
+            weakest = min(party, key=party.get)
+            sick = [name for name in party if name in game["sick"]]
+            if s["药品"] and (party[weakest] < 30 or sick and rng.random() < 0.3):   # 病得很重了才想起用药, 有时生病了马上用
+                medicine[:] = ["1", weakest if party[weakest] < 30 else sick[0]]
+                return "6"
+            most_rads = max(party, key=lambda name: game["rads"].get(name, 0))
+            if s["排辐剂"] and game["rads"].get(most_rads, 0) >= 70:
+                medicine[:] = ["2", most_rads]
+                return "6"
+            if s["食物"] < 10 and s["子弹"] >= 5:
+                return "4"
+            if s["燃料"] < w.PACES[game["pace"]][2] or w.days_left(game, "水") < 2 and rng.random() < 0.5:
+                return "3"
+            if s["食物"] and s["水"] and game["weather"] in ["酸雨", "辐射风暴"] and rng.random() < 0.3:
+                return "2"
+            if s["食物"] and s["水"] and party[weakest] < 20 and rng.random() < 0.5:
+                return "2"
+            return "1"
+        return "1"
+    return answer
 
 
 def ferry_money(game):
@@ -186,8 +294,8 @@ def month_for(seed):
     return months[seed % len(months)]
 
 
-def play_one(seed, month=None):
-    """让会规划的玩家玩一局, 返回屏幕上打印的所有文字。month 不填就按 seed 轮流选出发月份"""
+def play_one(seed, month=None, who="planner"):
+    """让会规划的玩家 (who="novice" 就是新手) 玩一局, 返回屏幕上打印的所有文字。month 不填就按 seed 轮流选出发月份"""
     month = month or month_for(seed)
     random.seed(seed)
     game_box = []
@@ -200,14 +308,15 @@ def play_one(seed, month=None):
         return game
 
     with mock.patch.object(w, "new_game", new_game), \
-            mock.patch("builtins.input", planner(game_box, screen, month)), \
-            mock.patch.multiple(w, can_aim=lambda: True, hunt_keys=hunter_bot(game_box)), \
+            mock.patch("builtins.input", (novice if who == "novice" else planner)(game_box, screen, month)), \
+            mock.patch.multiple(w, can_aim=lambda: True,
+                                hunt_keys=hunter_bot(game_box, *NOVICE_HUNT) if who == "novice" else hunter_bot(game_box)), \
             redirect_stdout(screen):
         w.main()
     return screen.getvalue()
 
 
-def main(rounds):
+def main(rounds, who="planner"):
     endings = Counter()
     days = []
     games_by_month = Counter()     # 每个出发月份玩了几局
@@ -217,7 +326,7 @@ def main(rounds):
             mock.patch.object(w, "SAVE_FILE", os.path.join(tmp, "savegame.json")), \
             mock.patch.object(w, "HIGH_SCORE_FILE", os.path.join(tmp, "highscores.json")):
         for seed in range(rounds):
-            text = play_one(seed)
+            text = play_one(seed, who=who)
             endings[re.findall(r"【(.*?结局.*?)】", text)[-1]] += 1
             month = month_for(seed)
             games_by_month[month] += 1
@@ -226,7 +335,7 @@ def main(rounds):
                 days.append(int(used[1]))
                 arrived_by_month[month] += 1
 
-    print(f"会规划的玩家玩了 {rounds} 局 ({w.DIFFICULTIES[DIFFICULTY][0]}难度):")
+    print(f"{'新手' if who == 'novice' else '会规划的玩家'}玩了 {rounds} 局 ({w.DIFFICULTIES[DIFFICULTY][0]}难度):")
     for ending, count in endings.most_common():
         print(f"  {ending}: {count * 100 / rounds:.1f}%")
     if days:
@@ -239,4 +348,4 @@ def main(rounds):
 if __name__ == "__main__":
     if len(sys.argv) > 2:
         DIFFICULTY = int(sys.argv[2])
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 1000)
+    main(int(sys.argv[1]) if len(sys.argv) > 1 else 1000, "novice" if "新手" in sys.argv[3:] else "planner")

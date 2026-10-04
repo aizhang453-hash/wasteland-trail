@@ -114,6 +114,16 @@ class GameTest(unittest.TestCase):
                     except StopGame:
                         pass
 
+    def test_novice_plays_whole_game(self):
+        """难度测试里的「新手」也能玩完一局, 不会卡在哪个问题上转圈, 有到达的也有没到的"""
+        from tests.balance import play_one
+        results = []
+        with real_car():
+            for seed in range(40):
+                with self.subTest(seed=seed):
+                    results.append("一共用了" in play_one(seed, who="novice"))
+        self.assertTrue(any(results) and not all(results))
+
     def test_planner_plays_whole_game(self):
         """会规划的玩家能走完全程, 路上的据点、事件都会遇到, 也不能报错"""
         from tests.balance import play_one
@@ -330,6 +340,42 @@ class GameTest(unittest.TestCase):
         self.assertEqual(game["money"], 20)   # 打八折, 只花了 80
         self.assertEqual(w.cost_of(game, "零件", 1), 16)
         self.assertEqual(w.cost_of(game, "食物", 1), 1)   # 有零头往上算
+
+    def test_prices_rise_to_the_west(self):
+        """越往西越贵: 卡尼堡是独立城的 115%, 达尔斯 190%; 有零头往上算; 商人再打八折; 钱够买几个也跟着算"""
+        game = new_test_game()
+        self.assertEqual(w.cost_of(game, "食物", 10), 10)   # 出发的独立城: 原价
+        game["here"] = "卡尼堡"
+        self.assertEqual(w.cost_of(game, "食物", 10), 12)   # 11.5 块, 零头往上算
+        self.assertEqual(w.unit_price(game, "燃料"), "4.6")
+        game["money"] = 46
+        self.assertEqual(w.most_affordable(game, "燃料"), 10)
+        game["here"] = "达尔斯"
+        self.assertEqual(w.cost_of(game, "零件", 1), 38)
+        merchant = self.with_job("商人")
+        merchant["here"] = "达尔斯"
+        self.assertEqual(w.cost_of(merchant, "零件", 1), 31)   # 38 x 0.8 = 30.4
+        game["here"] = "灰洞"   # 不是据点 (在路上碰到的人换东西不算这个), 按原价
+        self.assertEqual(w.price_level(game), 100)
+
+        game = new_test_game()
+        game["here"], game["money"] = "拉勒米堡", 100
+        answers = iter(["1", "10", "0"])   # 买 10 份食物
+        with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()) as screen:
+            w.shop(game, can_sell=True)
+        self.assertEqual(game["money"], 87)
+        self.assertIn("东西都比那里贵 30%", screen.getvalue())
+        self.assertIn("1. 食物  1.3 块一份", screen.getvalue())
+
+    def test_no_profit_from_buying_east_selling_west(self):
+        """卖东西不跟着越往西越贵: 不管在哪儿买、有没有商人帮着讲价, 买了再卖都会亏"""
+        for place in [w.START_PLACE] + list(w.OUTPOST_PRICES):
+            for job in [None, "商人"]:
+                game = self.with_job(job) if job else new_test_game()
+                game["here"] = place
+                for item in w.PRICES:
+                    with self.subTest(place=place, job=job, item=item):
+                        self.assertLess(w.sale_price(self.with_job("商人"), item, 10), w.cost_of(game, item, 10))
 
     def test_sell_at_outpost(self):
         """在据点能卖东西, 只给一半的价钱; 有商人能卖到六成。出发前的营地不能卖"""
@@ -1038,8 +1084,8 @@ class GameTest(unittest.TestCase):
         with real_car(), mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(io.StringIO()):
             w.offer_recruit(game, "卡尼堡")
         self.assertIn("杰克", game["party"])
-        self.assertEqual(game["supplies"]["食物"], 60)   # 30 公斤, 装得下
-        self.assertEqual(game["supplies"]["水"], 15)     # 只剩 30 公斤, 只装得下 15 份水
+        self.assertEqual(game["supplies"]["食物"], 100)   # 50 公斤, 装得下
+        self.assertEqual(game["supplies"]["水"], 5)       # 只剩 10 公斤, 只装得下 5 份水
 
     # ---------- 交易 ----------
 
@@ -1835,7 +1881,7 @@ class GameTest(unittest.TestCase):
                     w.setup(game)
                 self.assertEqual(game["difficulty"], choice)
                 self.assertEqual(game["money"], w.DIFFICULTIES[choice][1])
-                self.assertIn("3. 困难: 一开始有 450 块钱", screen.getvalue())
+                self.assertIn("3. 困难: 一开始有 370 块钱", screen.getvalue())
         self.assertGreater(w.DIFFICULTIES[1][1], w.DIFFICULTIES[2][1])
         self.assertGreater(w.DIFFICULTIES[2][1], w.DIFFICULTIES[3][1])
         self.assertEqual(w.DIFFICULTIES[2][1:5], (500, 100, 100, 100))   # 普通就是没有难度选择以前的样子
@@ -2317,13 +2363,26 @@ class GameTest(unittest.TestCase):
                 w.start_playing([])
         self.assertEqual(screen.getvalue() + errors.getvalue(), "")
 
+    def test_no_drowning_on_easy(self):
+        """简单难度: 过河翻车、木筏撞上礁石都不会有人被冲走 (普通难度会)"""
+        for difficulty, lost in [(1, False), (2, True)]:
+            with self.subTest(difficulty=difficulty):
+                game = new_test_game()
+                game["difficulty"] = difficulty
+                with mock.patch.multiple(w, DROWN_CHANCE=1, RAPID_HIT_DROWN=1), redirect_stdout(io.StringIO()) as screen:
+                    w.capsize(game, "堪萨斯河渡口", "直接开车过河")
+                    w.hit_rock(game)
+                self.assertEqual(len(game["party"]) < 4, lost)
+                if not lost:
+                    self.assertIn("差点被急流冲走", screen.getvalue())
+
     def test_difficulty_changes_every_kind_of_sickness(self):
         """难度也影响喝脏水生病、伤口感染、破伤风, 不只是平常生病"""
         game = new_test_game()
         game["difficulty"] = 3
-        self.assertAlmostEqual(w.sick_odds(game, 0.1), 0.13)
+        self.assertAlmostEqual(w.sick_odds(game, 0.1), 0.14)   # 困难: 多四成
         game["difficulty"] = 1
-        self.assertAlmostEqual(w.sick_odds(game, 0.1), 0.07)
+        self.assertAlmostEqual(w.sick_odds(game, 0.1), 0.04)   # 简单: 只有四成
         sick = {}
         for difficulty in [1, 2, 3]:   # 没水喝, 只能喝脏水: 普通难度 15% 的机会病倒
             game = new_test_game()
