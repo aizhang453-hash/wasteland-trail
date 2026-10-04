@@ -3,6 +3,7 @@
 改了游戏里的数字以后, 跑一下这个, 看难度有没有变得太离谱。
 运行方法: 在 game 文件夹里输入 python3 tests/balance.py
 想多玩几局: python3 tests/balance.py 5000
+换个难度 (1 简单, 2 普通, 3 困难, 不写就是普通): python3 tests/balance.py 1000 3
 """
 
 import io
@@ -21,6 +22,8 @@ import wasteland_trail as w
 
 # 会规划的玩家在据点遇到愿意加入的人时带不带上 (想测"一个人走完全程"就改成 False)
 RECRUIT = True
+# 选哪个难度 (见游戏里的 DIFFICULTIES)
+DIFFICULTY = 2
 # 坐木筏过急流时, 会规划的玩家选错水道的机会 (真人要在几秒内选, 难免手忙脚乱)
 RAPID_MISTAKES = 0.2
 
@@ -31,7 +34,7 @@ def planner(game_box, screen, month):
     留着坐渡船的钱; 过河时水浅就开过去, 有渡船就坐渡船, 水只深一点就等两天看水退不退, 不然就浮过去。
     到了达尔斯, 钱够就交过路费走巴洛路, 不够就坐木筏, 急流里每次都选对水道"""
     thirst = 1.5 if month >= 6 else 1   # 夏天天热, 水要多带
-    plan = ["1", "A", "1", str(month)]   # 单位、名字、性别、出发月份
+    plan = [str(DIFFICULTY), "1", "A", "1", str(month)]   # 难度、单位、名字、性别、出发月份
     menu_visits = [0]
     # 出发前要买的东西 (一个人出发), 按顺序买, 钱不够了后面的就少买
     shopping = [("1", 60), ("2", round(60 * thirst)), ("3", 70), ("4", 40), ("6", 1), ("7", 1), ("8", 1)]
@@ -177,7 +180,7 @@ def main(rounds):
                 days.append(int(used[1]))
                 arrived_by_month[month] += 1
 
-    print(f"会规划的玩家玩了 {rounds} 局:")
+    print(f"会规划的玩家玩了 {rounds} 局 ({w.DIFFICULTIES[DIFFICULTY][0]}难度):")
     for ending, count in endings.most_common():
         print(f"  {ending}: {count * 100 / rounds:.1f}%")
     if days:
@@ -188,4 +191,6 @@ def main(rounds):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 2:
+        DIFFICULTY = int(sys.argv[2])
     main(int(sys.argv[1]) if len(sys.argv) > 1 else 1000)

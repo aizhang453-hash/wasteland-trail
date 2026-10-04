@@ -4,11 +4,17 @@
 运行方法: 在终端里输入 python wasteland_trail.py
 """
 
+import atexit
 import json
 import os
 import random
+import shutil
+import subprocess
 import sys
+import threading
 import time
+import unicodedata
+import wave
 
 # 一个键一个键地读键盘: Mac 和 Linux 用 termios, Windows 用 msvcrt
 try:
@@ -20,6 +26,11 @@ try:
     import msvcrt
 except ImportError:
     msvcrt = None
+# 放音乐: Windows 用自带的 winsound; Mac 和 Linux 用系统自带的播放器 (见 music_player)
+try:
+    import winsound
+except ImportError:
+    winsound = None
 
 # 存档文件和最高分榜, 都放在游戏文件旁边
 SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
@@ -27,13 +38,21 @@ HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "high
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v2.3"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v2.4"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
 DESTINATION = "俄勒冈城"
 TOTAL_DISTANCE = 3119   # 到俄勒冈城的总路程(公里)
-START_MONEY = 500       # 一开始的钱 (一个人出发, 一开始吃喝少; 队友加入时会自带口粮)
+
+# 难度 (开局时玩家选): 编号 -> (名字, 一开始有多少钱, 路上出事的机会是平时的百分之几, 生病的机会是平时的百分之几,
+#                              得分是百分之几, 说明)
+# 「普通」就是没有难度选择以前的样子。跟原版一样, 越难得分越高
+DIFFICULTIES = {
+    1: ("简单", 700, 70, 70, 50, "路上出事、生病都少一些"),
+    2: ("普通", 500, 100, 100, 100, "钱刚刚够用, 要精打细算"),
+    3: ("困难", 450, 130, 130, 150, "路上出事、生病都多一些"),
+}
 
 # 距离单位(开局时玩家选): 名字 -> 1 公里等于多少这个单位。游戏里的路程一律按公里算, 只在显示时换算
 UNITS = {"公里": 1, "英里": 0.621371}
@@ -241,6 +260,17 @@ RADIATION_LEVELS = [
 ANTI_RAD = 50          # 一支排辐剂能排掉多少辐射
 SICKNESS_RADS = 40     # 「辐射病」事件一下子增加多少辐射
 
+# 辐射热点: 路线经过几个真实的核设施附近, 停在这几段路上的每一天都要多受辐射 (开快一点能少待几天)。
+# (从几公里, 到几公里, 名字, 在外面时每天受多少辐射, 躲在车里时每天受多少辐射, 介绍)
+# 战争里这些地方出了什么事, 等背景故事定了再说, 所以现在只说"辐射偏高", 几个地方也一样重。
+# 每一段都比车一天最多能开的路 (130 公里) 长, 不会一天就整段开过去、一点辐射都不受
+HOTSPOTS = [
+    (920, 1060, "导弹发射井一带", 6, 2, "南边的高平原下面, 埋着冷战时修的洲际导弹发射井。"),
+    (1910, 2050, "爱达荷国家实验室一带", 6, 2, "北边的荒原上是爱达荷国家实验室, 冷战时在那里建过几十座试验用的核反应堆。"),
+    (2720, 2861, "汉福德核基地下游", 6, 2, "哥伦比亚河上游是汉福德核基地, 当年美国造原子弹用的钚就是在那里造出来的。"),
+]
+HOTSPOT_WARNING = 350  # 离下一个辐射热点还有多远时, 状态栏开始提醒 (公里)
+
 # ---------- 生病和受伤 ----------
 
 # 这些老病现在都能治, 可核战争以后没有了干净的水、疫苗和医院, 它们又回来了。用药品能马上治好。
@@ -280,10 +310,27 @@ LOOT = {"食物": (10, 40), "水": (10, 30), "燃料": (3, 10),
 HUNT_WORDS = ["bang", "pow", "boom", "zap"]
 ANIMALS = {"变异野兔": (10, 25), "双头鹿": (30, 60), "辐射野猪": (50, 90)}
 
-# 过场动画: 每次赶路时播放一小段车在废土上开的画面 (只在真正的终端里播, 跑测试时不播)
+# 过场动画和画面: 赶路 (跟着天气变)、过河、坐木筏的动画, 还有地标、据点、墓碑、结局的画和每个人的样子。
+# 只在真正的终端里和网页版里有 (跑测试时没有)
 ANIMATION = True          # 不想看就改成 False
 ANIMATION_FRAMES = 24     # 一共几帧
 ANIMATION_DELAY = 0.06    # 每帧停几秒 (24 帧大约 1.5 秒)
+
+# 音乐: 用代码做的老式游戏机音乐, 放在 music 文件夹里 (做音乐的程序是 music/make_music.py, 想改曲子就改它)。
+# 只在真正的终端里和网页版里放 (跑测试时不放)。网页版上还有一个「♪」按钮可以关掉
+MUSIC = True              # 不想听就改成 False
+MUSIC_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "music")
+# 什么时候放什么: 名字 -> (文件, 怎么放)。
+# 「循环」是背景音乐, 一直放到换成别的; 「一段」放完接着放原来的背景音乐; 「结尾」放完就安静了
+MUSIC_TRACKS = {
+    "主菜单": ("title.wav", "循环"),       # 自己写的, 有点悲伤的废土曲子
+    "赶路": ("travel.wav", "循环"),        # 《哦! 苏珊娜》, 1848 年拓荒者一路上唱的歌
+    "据点": ("outpost.wav", "一段"),
+    "热点": ("geiger.wav", "一段"),        # 盖革计数器的咔嗒声
+    "去世": ("taps.wav", "一段"),          # 《熄灯号》
+    "到达": ("arrive.wav", "结尾"),
+    "全军覆没": ("game_over.wav", "结尾"),
+}
 
 # 彩色界面: 只在真正的终端里和网页版里有颜色 (跑测试时没有)。不想要颜色就改成 False
 COLOR = True
@@ -567,6 +614,9 @@ def lose_member(game, name, saying, diary_saying=None):
     game["rads"].pop(name, None)
     game["sick"].pop(name, None)
     game["dead"].append(name)
+    if game["party"]:   # 最后一个人也没了的话, 放的是全军覆没的音乐
+        play_music("去世")
+    show_picture(TOMBSTONE, "灰", ["", "", f"这里长眠着 {name}"])
     print(colored(f"!!! {name} {saying}", "红", bold=True))
     write_diary(game, f"{name} {diary_saying or saying}")
 
@@ -608,6 +658,22 @@ def radiation_level(rads):
 def irradiate(game, name, amount):
     """让一个人受到辐射 (amount 是负数就是排掉辐射)。辐射值在 0 到 100 之间"""
     game["rads"][name] = max(0, min(100, game["rads"].get(name, 0) + amount))
+
+
+def hotspot_here(game):
+    """现在是不是在辐射热点里: 是的话返回 HOTSPOTS 里的那一行, 不是就返回 None"""
+    for spot in HOTSPOTS:
+        if spot[0] <= game["distance"] < spot[1]:
+            return spot
+    return None
+
+
+def next_hotspot(game):
+    """前面的下一个辐射热点 (HOTSPOTS 里的那一行), 后面都没有了就返回 None"""
+    for spot in HOTSPOTS:
+        if spot[0] > game["distance"]:
+            return spot
+    return None
 
 
 def radiation_damage(game):
@@ -675,6 +741,7 @@ def catch_diseases(game, hungry, cold_people, traveling):
             chance += extra
             if disease:
                 likely += [disease, disease]   # 跟这个情况有关的病更容易得
+        chance = chance * DIFFICULTIES[game["difficulty"]][3] / 100   # 难度越高越容易生病
         if random.random() < chance:
             get_sick(game, name, random.choice(likely))
 
@@ -783,7 +850,8 @@ def new_game():
     return {
         "day": 1,
         "distance": 0,
-        "money": START_MONEY,
+        "difficulty": 2,    # 难度 (开局时玩家选, 见 DIFFICULTIES)。以前的存档没有难度, 就算普通
+        "money": DIFFICULTIES[2][1],
         "supplies": {item: 0 for item in PRICES},
         "party": {},        # 队员名字 -> 健康(0 到 100)
         "dead": [],         # 路上去世的人
@@ -794,7 +862,7 @@ def new_game():
         "temperature": 20,  # 今天白天的最高气温 (摄氏度)
         "warmth": 0,        # 这几天比平常热几度 (负数是冷)
         "rain": 0,          # 这几天下了多少雨雪 (下得越多, 河水越深)
-        "visited": [],      # 已经到过的据点
+        "visited": [],      # 已经到过的地方 (地标、据点, 还有进过的辐射热点)
         "seeds": False,     # 有没有找到种子库(隐藏结局)
         "gender": "男",     # 主角的性别
         "unit": "公里",     # 显示路程用的单位
@@ -807,6 +875,7 @@ def new_game():
 
 
 def setup(game):
+    choose_difficulty(game)
     unit = ask_number("距离单位: 1. 公里  2. 英里  ", 1, 2)
     game["unit"] = "公里" if unit == 1 else "英里"
     print("\n核战争已经过去二十年了。")
@@ -817,6 +886,7 @@ def setup(game):
     leader = input("你叫什么名字? (直接按回车就叫\"队长\") ").strip() or "队长"
     gender = ask_number("你的性别: 1. 男  2. 女  ", 1, 2)
     game["gender"] = "男" if gender == 1 else "女"
+    show_picture(PORTRAITS[game["gender"]], words=["", "", f"{leader}, 这就是你。"])
     print("\n什么时候出发? 当年的拓荒者大多在 4、5 月出发。")
     print("早走天还冷, 山里可能还在下雪, 要带冬衣; 晚走天热, 路上要多喝水。")
     game["start_month"] = ask_number(f"出发月份 ({FIRST_MONTH}~{LAST_MONTH} 月): ", FIRST_MONTH, LAST_MONTH)
@@ -830,7 +900,17 @@ def setup(game):
           "天冷时每人要有一套冬衣。")
     print("      路上会生病受伤, 药品能治好; 辐射会在身体里越积越多, 只有排辐剂能把它排掉。")
     print("      路上要过好几条大河, 有的河边有渡船, 坐渡船要花钱, 别把钱一下子全花光。")
+    print("      有几段路靠近核设施, 辐射偏高, 排辐剂要多备一些。")
     shop(game)
+
+
+def choose_difficulty(game):
+    """开局选难度: 决定一开始有多少钱、路上出事和生病的机会, 还有得分要乘多少"""
+    print("\n选难度 (越难得分越高):")
+    for number, (name, money, _, _, score, note) in DIFFICULTIES.items():
+        print(f"{number}. {name}: 一开始有 {money} 块钱, {note}。得分 ×{score / 100:g}")
+    game["difficulty"] = ask_number("选哪个? ", 1, len(DIFFICULTIES))
+    game["money"] = DIFFICULTIES[game["difficulty"]][1]
 
 
 def cost_of(game, item, amount):
@@ -941,6 +1021,14 @@ def show_status(game):
     else:
         note = ""
     print(f"下一站: {name}{note}, 还有 {show_distance(game, km - game['distance'])}")
+    spot = hotspot_here(game)
+    ahead = next_hotspot(game)
+    if spot:
+        print(colored(f"辐射热点: 正在{spot[2]}, 在外面每天受 {spot[3]} 点辐射, 躲在车里 {spot[4]} 点。"
+                      f"还要开 {show_distance(game, spot[1] - game['distance'])}才能离开", "紫"))
+    elif ahead and ahead[0] - game["distance"] <= HOTSPOT_WARNING:
+        print(colored(f"辐射热点: 再开 {show_distance(game, ahead[0] - game['distance'])}就到{ahead[2]}, "
+                      f"那一带辐射偏高", "紫"))
     if game["seeds"]:
         print("车上带着: 种子库的种子")
 
@@ -969,7 +1057,9 @@ def show_party(game):
         rads = game["rads"].get(name, 0)
         _, rads_word, rads_health = radiation_level(rads)
         rads_note = f" {rads_word}, 每天掉 {-rads_health} 点健康" if rads_health else ""
-        print(f"{name}{tag}  健康 {h} {health_word(h)}  {health_bar(h)}  辐射 {rads}{rads_note}")
+        health = f"健康 {h} {health_word(h)}  {health_bar(h)}"
+        radiation = f"辐射 {rads}{rads_note}"
+        notes = []   # 病和特长
         if name in game["sick"]:
             disease, days = game["sick"][name]
             damage = -DISEASES[disease][0]
@@ -977,11 +1067,23 @@ def show_party(game):
             if len(game["party"]) == 1:
                 damage += SOLO_SICK_DAMAGE
                 alone = " (没人照顾, 病得更重)"
-            print(f"    {disease}: {DISEASES[disease][3]}, 每天掉 {damage} 点健康{alone}, "
-                  f"大约还要 {days} 天才好 (躲在车里休养好得快一倍, 用药品马上就好)")
+            notes.append(f"{disease}: {DISEASES[disease][3]}, 每天掉 {damage} 点健康{alone}, "
+                         f"大约还要 {days} 天才好 (躲在车里休养好得快一倍, 用药品马上就好)")
         if name in game["jobs"]:
-            print(f"    特长: {SKILLS[game['jobs'][name]]}")
+            notes.append(f"特长: {SKILLS[game['jobs'][name]]}")
+        if can_animate():   # 在终端和网页版里, 每个人的样子画在左边, 字写在右边 (切成短行, 免得自动换行把画挤歪)
+            words = [f"{name}{tag}", health, radiation]
+            for note in notes:
+                words += wrap_text(note, SCENE_WIDTH - PORTRAIT_WIDTH)
+            print()
+            print("\n".join(beside(portrait_of(game, name), words, width=PORTRAIT_WIDTH)))
+        else:
+            print(f"{name}{tag}  {health}  {radiation}")
+            for note in notes:
+                print("    " + note)
     average = sum(game["party"].values()) // len(game["party"])
+    if can_animate():
+        print()   # 跟最后一个人的头像隔开
     print(f"队伍整体: {health_word(average)} (平均健康 {average})")
     if game["dead"]:
         print(f"路上失去的人: {'、'.join(game['dead'])}")
@@ -1059,6 +1161,12 @@ def pass_day(game, health_bonus=0, indoors=False, traveling=False):
     _, _, outdoor_rads, indoor_rads, _ = WEATHER[game["weather"]]
     for name in game["party"]:
         irradiate(game, name, indoor_rads if indoors else outdoor_rads)
+    spot = hotspot_here(game)
+    if spot and game["party"]:   # 在辐射热点里, 不管天气好坏, 每天都要多受辐射
+        rads = spot[4] if indoors else spot[3]
+        for name in game["party"]:
+            irradiate(game, name, rads)
+        print(colored(f"{spot[2]}辐射偏高, {everyone(game)}又受了 {rads} 点辐射。", "紫"))
     radiation_damage(game)
 
     # 生病: 已经病了的人养病, 再看看今天有没有人病倒
@@ -1079,6 +1187,7 @@ def travel(game):
     weather = game["weather"]
     speed = WEATHER[weather][0]
     if speed == 0:
+        drive_animation(game, moving=False)
         print(f"\n{weather}太大了, 车根本开不动, {everyone(game)}只能躲在车里等了一天。")
         pass_day(game, indoors=True)
         return
@@ -1289,12 +1398,22 @@ def reached(game, km, name):
 
 
 def check_places(game):
-    """路过风景地标会介绍一下, 到了据点还可以进去买东西。
-    一天可能连着经过好几个地方, 所以把地标和据点放在一起, 按路程从近到远排好再一个个看"""
+    """路过风景地标会介绍一下, 到了据点还可以进去买东西, 开进辐射热点会提醒。
+    一天可能连着经过好几个地方, 所以把它们放在一起, 按路程从近到远排好再一个个看"""
     places = [(km, name, intro, False) for km, (name, intro) in LANDMARKS.items()]
     places += [(km, name, intro, True) for km, (name, intro) in OUTPOSTS.items()]
+    places += [(start, name, intro, False) for start, _, name, _, _, intro in HOTSPOTS]
+    hotspots = [spot[2] for spot in HOTSPOTS]
     for km, name, intro, can_shop in sorted(places):
         if not reached(game, km, name):
+            continue
+        if name in PICTURES:   # 先看一眼那里的样子
+            show_picture(*PICTURES[name])
+        if name in hotspots:
+            play_music("热点")
+            show_picture(HOTSPOT_SIGN, "紫")
+            print(f"\n{you(game)}开进了{title(name, '紫')}{intro}{colored('盖革计数器响个不停, 这一带辐射偏高。', '紫')}")
+            write_diary(game, f"开进了{name}, 这一带辐射偏高。", km)
             continue
         if name in RIVERS:
             print(f"\n{you(game)}来到了{title(name, '青')}{intro}")
@@ -1307,6 +1426,7 @@ def check_places(game):
             print(f"\n{you(game)}经过了{title(name, '青')}{intro}")
             write_diary(game, f"经过了{name}。", km)
             continue
+        play_music("据点")
         print(f"\n{you(game)}到了{title(name, '青')}{intro}")
         write_diary(game, f"到了{name}。", km)
         offer_recruit(game, name, km)
@@ -1330,6 +1450,7 @@ def offer_recruit(game, place, km=None):
         print(f"这里有个叫 {name} 的{job}也想往西走, 可惜车上东西太重, 再坐一个人就超载了。")
         return
     brings = "和".join(f" {amount} 份{item}" for item, amount in RECRUIT_BRINGS.items())
+    show_picture(PORTRAITS[job], words=["", "", f"{name} ({job})"])
     print(f"这里有个叫 {name} 的{job}也想往西走, 愿意跟{you(game)}一起, 还会带上自己的{brings}。")
     print(f"特长: {SKILLS[job]}。不过多一个人, 每天也要多吃多喝, 天冷时还要多一套冬衣。")
     if ask_number(f"1. 让{name}加入  2. 不用了  ", 1, 2) == 1:
@@ -1404,18 +1525,21 @@ def ford_river(game, place, depth):
     river = RIVERS[place][0]
     limit = wade_depth(game)
     if depth <= limit:
+        river_animation(game, "开", "过去了")
         print(f"\n车稳稳地蹚过了{river}。")
         write_diary(game, f"直接开车过了{river}。")
     elif depth <= round(limit + SOAK_DEPTH, 1):
         s = game["supplies"]
         spoiled = s["食物"] // SOAK_FOOD
         s["食物"] -= spoiled
+        river_animation(game, "开", "进水")
         print("\n车开到河中间, 河水漫过了车门, 发动机进水熄火了!")
         print(f"{everyone(game)}好不容易把车推上了对岸, 泡了脏河水的 {spoiled} 份食物不能吃了。")
         print("又花了一天, 才把发动机晾干。")
         write_diary(game, f"开车过{river}时发动机进了水, 扔掉了 {spoiled} 份食物, 晾了一天车。")
         pass_day(game)
     else:
+        river_animation(game, "开", "翻车")
         capsize(game, place, f"开车过{river}")
 
 
@@ -1424,8 +1548,10 @@ def float_river(game, place, depth):
     river = RIVERS[place][0]
     print(f"\n{you(game)}把空油桶绑在车身四周, 车像船一样, 慢慢漂向对岸……")
     if random.random() < FLOAT_RISK * (1 + max(0, depth - 1)):
+        river_animation(game, "浮", "翻车")
         capsize(game, place, f"把车浮过{river}")
     else:
+        river_animation(game, "浮", "过去了")
         print("车平平安安地漂到了对岸。")
         write_diary(game, f"绑上空油桶, 把车浮过了{river}。")
 
@@ -1441,6 +1567,7 @@ def take_ferry(game, place):
             pass_day(game, indoors=True)
             if not game["party"]:
                 return
+    river_animation(game, "渡船", "过去了")
     print(f"\n{you(game)}交了 {fare} 块钱。摆渡的是一伙背着枪的幸存者, 他们拉着一根横过河面的钢缆, "
           f"用废油桶和铁板扎成的大筏子把车送到了对岸。")
     write_diary(game, f"花 {fare} 块钱坐渡船过了{river}。")
@@ -1501,6 +1628,7 @@ def raft_trip(game, km):
     print(f"\n{you(game)}在{LAST_ROAD_FROM}找来废油桶和木板, 花了一天扎成一个大木筏, 把车也开了上去。")
     write_diary(game, f"在{LAST_ROAD_FROM}扎了一个木筏, 顺着哥伦比亚河漂下去。")
     pass_day(game)
+    raft_animation(game)
     print("\n木筏顺着哥伦比亚河往下漂。前面会有急流: 看清楚哪边是水道, 就飞快地按那个数字!")
     for number in range(1, RAPIDS + 1):
         if not game["party"]:
@@ -1510,6 +1638,7 @@ def raft_trip(game, km):
             pass_day(game)
             if not game["party"]:
                 return
+            raft_animation(game)   # 第二天一早接着往下漂
         shoot_rapid(game, number)
     if not game["party"]:
         return
@@ -1702,6 +1831,7 @@ def stranger(game):
     while name in game["party"] or name in game["dead"]:
         name += "2"
     print(f"\n{title('陌生人')}路边有个叫 {name} 的幸存者, 想跟{you(game)}一起走。")
+    show_picture(PORTRAITS["陌生人"], words=["", "", name])
     print(f"「{pick(game, '大哥', '大姐')}, 带上我吧, 我什么活都能干!」")
     if len(game["party"]) >= MAX_PARTY:
         print(f"可惜车上已经坐满了, 只能让 {name} 自己走。")
@@ -1781,9 +1911,10 @@ EVENTS = [raiders, breakdown, warehouse,
 
 
 def random_event(game, km):
-    """路上发生随机事件的机会跟开了多远有关: 每开 100 公里, 大约有 35% 的机会。
+    """路上发生随机事件的机会跟开了多远有关: 每开 100 公里, 大约有 35% 的机会 (简单难度少一些, 困难多一些)。
     这样开得慢不会因为在路上的天数多, 就遇到更多倒霉事"""
-    if game["party"] and random.random() < EVENT_CHANCE_PER_100KM * km / 100:
+    chance = EVENT_CHANCE_PER_100KM * km / 100 * DIFFICULTIES[game["difficulty"]][2] / 100
+    if game["party"] and random.random() < chance:
         random.choice(EVENTS)(game)
 
 
@@ -1792,6 +1923,8 @@ def random_event(game, km):
 def arrive(game):
     """到达俄勒冈城, 根据路上的情况决定是哪个结局。返回结局的名字 (比如"完美结局"), 记最高分时要用"""
     last_day = game["day"] - 1
+    play_music("到达")
+    show_picture(CITY_ART, "绿")
     print(f"\n{date_text(game, last_day)}, {you(game)}到达了{DESTINATION}! 一共用了 {last_day} 天。")
     write_diary(game, f"到达了{DESTINATION}!", day=last_day)
     print(f"活下来的人: {'、'.join(game['party'])}")
@@ -1805,6 +1938,7 @@ def arrive(game):
         print("\n" + title("隐藏结局: 绿色的希望", "绿"))
         print("城里的科学家打开种子库, 激动得说不出话。")
         print("第二年春天, 城墙外第一次长出了麦子。废土开始变绿了。")
+        show_picture(FIELD_ART, "绿")
     elif not game["dead"] and len(game["party"]) == 1:
         ending = "独行结局"
         print("\n" + title("独行结局: 一个人走完全程", "绿"))
@@ -1849,6 +1983,10 @@ def score_of(game):
     if game["seeds"]:
         total += SCORE_SEEDS
         lines.append(f"带来了种子库的种子: {SCORE_SEEDS} 分")
+    name, _, _, _, percent, _ = DIFFICULTIES[game["difficulty"]]
+    if percent != 100:   # 普通难度不用乘
+        total = total * percent // 100
+        lines.append(f"{name}难度: 得分 ×{percent / 100:g}")
     return total, lines
 
 
@@ -1883,7 +2021,8 @@ def record_score(game, ending):
         print("  " + line)
     print(colored(f"总分: {total} 分", "黄", bold=True))
     entry = {"name": game["leader"], "score": total, "ending": ending,
-             "days": game["day"] - 1, "survivors": len(game["party"])}
+             "days": game["day"] - 1, "survivors": len(game["party"]),
+             "difficulty": DIFFICULTIES[game["difficulty"]][0]}
     scores = load_high_scores() + [entry]
     scores.sort(key=lambda e: e["score"], reverse=True)   # 分数一样时, 先得到的排在前面
     scores = scores[:HIGH_SCORES]
@@ -1903,7 +2042,9 @@ def show_high_scores():
     if not scores:
         print("还没有人走到俄勒冈城。走到终点才算分。")
     for i, e in enumerate(scores, 1):
-        print(f"{i:>2}. {e['score']:>5} 分  {e['name']}  {e['ending']}, 用了 {e['days']} 天, {e['survivors']} 个人到达")
+        difficulty = e.get("difficulty", "普通")   # 以前没有难度选择, 那时候的成绩都算普通
+        print(f"{i:>2}. {e['score']:>5} 分  {e['name']}  {difficulty}  {e['ending']}, "
+              f"用了 {e['days']} 天, {e['survivors']} 个人到达")
 
 
 # ========== 存档 ==========
@@ -1933,6 +2074,9 @@ def load_game():
         game["supplies"].setdefault(item, 0)
     if game["weather"] not in WEATHER:   # 旧版本的天气 (比如"晴朗""酷热") 现在没有了
         game["weather"] = "晴"
+    for start, _, name, _, _, _ in HOTSPOTS:   # 旧存档里已经开进去 (或者开过去) 的辐射热点, 不用再提醒
+        if game["distance"] >= start and name not in game["visited"]:
+            game["visited"].append(name)
     return game
 
 
@@ -1942,57 +2086,187 @@ def delete_save():
         os.remove(SAVE_FILE)
 
 
-# ========== 过场动画 ==========
+# ========== 音乐 ==========
+# 在终端里: 另外开一个线程 (跟游戏同时跑的一小段程序) 一首一首地放, 游戏照常往下走。
+# 网页版里: run_in_browser.py 把 start_playing 换掉, 让网页去放
 
-# 赶路时的画面: 车停在中间往西 (左) 开, 背景往右退。远处的山退得慢, 近处的东西退得快, 看起来就有远近
+music_now = {"background": None, "turn": 0, "process": None}   # 现在的背景音乐、第几次换音乐、正在放的播放器
+music_lock = threading.Lock()   # 换音乐和开始放一首, 不能同时进行
+
+
+def can_play_music():
+    """能不能放音乐: 设置里没关掉, 而且是在真正的终端里或者网页版里"""
+    return MUSIC and (can_read_keys() or IN_BROWSER)
+
+
+def play_music(name):
+    """放 MUSIC_TRACKS 里的一首。背景音乐已经在放了就不重新开始"""
+    if not can_play_music():
+        return
+    file, how = MUSIC_TRACKS[name]
+    if how == "循环":
+        if music_now["background"] == name:
+            return
+        music_now["background"] = name
+        start_playing([(file, True)])
+        return
+    if how == "结尾":
+        music_now["background"] = None
+    playlist = [(file, False)]
+    if music_now["background"]:   # 放完这一段, 接着放原来的背景音乐
+        playlist.append((MUSIC_TRACKS[music_now["background"]][0], True))
+    start_playing(playlist)
+
+
+def stop_music():
+    music_now["background"] = None
+    start_playing([])
+
+
+def start_playing(playlist):
+    """停下正在放的, 改放 playlist: [(文件, 是不是一直循环), ...], 一首一首地放"""
+    with music_lock:
+        music_now["turn"] += 1   # 以前的线程看到这个数变了, 就知道该停了
+        process = music_now["process"]
+        if process and process.poll() is None:
+            process.terminate()
+        if winsound:
+            winsound.PlaySound(None, 0)
+    if playlist:
+        threading.Thread(target=music_thread, args=(playlist, music_now["turn"]), daemon=True).start()
+
+
+def music_thread(playlist, turn):
+    """在另一个线程里一首一首地放, 直到换了音乐"""
+    for file, loop in playlist:
+        path = os.path.join(MUSIC_FOLDER, file)
+        while music_now["turn"] == turn:
+            if not play_file(path, turn):
+                return
+            if not loop:
+                break
+
+
+def play_file(path, turn):
+    """把一首放一遍, 放完 (或者换了音乐) 才回来。放不了 (没有这个文件、电脑上没有播放器) 就返回 False"""
+    if not os.path.exists(path):
+        return False
+    if winsound:
+        with music_lock:
+            if music_now["turn"] != turn:
+                return False
+            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+        end = time.time() + sound_length(path)
+        while time.time() < end and music_now["turn"] == turn:
+            time.sleep(0.05)
+        return True
+    player = music_player()
+    if not player:
+        return False
+    with music_lock:
+        if music_now["turn"] != turn:
+            return False
+        try:
+            process = subprocess.Popen(player + [path], stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            return False
+        music_now["process"] = process
+    process.wait()
+    return True
+
+
+def music_player():
+    """Mac 和 Linux 上用系统自带的播放器: Mac 有 afplay, Linux 一般有 paplay 或 aplay。都没有就返回 None"""
+    for command in [["afplay"], ["paplay"], ["aplay", "-q"]]:
+        if shutil.which(command[0]):
+            return command
+    return None
+
+
+def sound_length(path):
+    """一首有几秒长"""
+    with wave.open(path) as f:
+        return f.getnframes() / f.getframerate()
+
+
+atexit.register(stop_music)   # 游戏关掉的时候 (包括按 Ctrl+C), 把音乐也关掉
+
+
+# ========== 过场动画 ==========
+# 只在真正的终端里和网页版里播 (跑测试、用管道输入时不播)。
+# 画面里只用英文字符: 中文字在终端里占两格, 跟英文字对不齐。要写中文就写在画面的下面
+
+# 一帧画面就是一块「画布」: 一行一行的格子, 每个格子是 [字, 颜色]。
+# 先画远处的东西, 再画近处的, 后画的盖住先画的, 就有了前后
 SCENE_WIDTH = 60
-SCENE_SKY = "       v                       .                  v          "     # 天上盘旋的秃鹫
-SCENE_FAR = "      /\\           __/\\__              /\\/\\          ___/\\_   "   # 远处的山
-SCENE_NEAR = [                                                                  # 近处的废墟、枯树、破车
-    "       _               \\ /                        ._.          ",
-    "     _| |_      __     _|_        ___            |  |    \\|/  ",
-    "    |  |  |    /  \\   |   |      /_x_\\    .      |  |_    |   ",
-]
-# 路面上的裂缝要不规则: 要是每隔 4 格一个, 每帧又正好移 4 格, 看起来就像没动 (跟电影里车轮像是倒着转一个道理)
-SCENE_ROAD = "=  =   =   .  =  =    =   , =  ==   =  .   =  =  "
-CAR_ART = [
-    "       ______      ",
-    "  ____/__||__\\___  ",
-    " <_____________o_| ",
-    "   (@)        (@)  ",
-]
-CAR_X = 18                                  # 车画在第几列
-DUST = ["  . o ", " o . O", "O  o .", " . O  "]   # 车尾扬起的尘土, 一帧换一个
+SCENE_HEIGHT = 11
+
+
+def can_animate():
+    """能不能播动画、显示画面: 设置里没关掉, 而且是在真正的终端里或者网页版里"""
+    return ANIMATION and (can_read_keys() or IN_BROWSER)
+
+
+def new_canvas():
+    return [[[" ", None] for _ in range(SCENE_WIDTH)] for _ in range(SCENE_HEIGHT)]
+
+
+def draw(canvas, y, x, text, color=None, behind=False, solid=False):
+    """把 text 画在画布的第 y 行、第 x 列 (画到画布外面的部分就不要了)。
+    text 里的空格是透明的, 会透出后面的东西; solid=True 时, 字中间的空格也会盖住后面 (比如车身里面不该看到雨)。
+    behind=True 时只画在还空着的格子上 (比如雨雪落在山和车的后面)"""
+    if not 0 <= y < len(canvas) or not text.strip():
+        return
+    first = len(text) - len(text.lstrip())
+    last = len(text.rstrip())
+    for i, ch in enumerate(text):
+        if not 0 <= x + i < SCENE_WIDTH:
+            continue
+        if ch == " " and not (solid and first <= i < last):
+            continue
+        cell = canvas[y][x + i]
+        if behind and cell[0] != " ":
+            continue
+        cell[0], cell[1] = ch, color
+
+
+def canvas_lines(canvas):
+    """把画布变成一行一行可以打印的字: 颜色一样的几个字连在一起上色"""
+    lines = []
+    for row in canvas:
+        line = ""
+        start = 0
+        while start < len(row):
+            color = row[start][1]
+            end = start
+            while end < len(row) and row[end][1] == color:
+                end += 1
+            line += colored("".join(ch for ch, _ in row[start:end]), color)
+            start = end
+        lines.append(line)
+    return lines
 
 
 def scene_slice(tile, offset):
     """背景是一条可以无限循环的长条, 从里面切出屏幕宽的一段"""
     start = offset % len(tile)
-    return (tile * 3)[start:start + SCENE_WIDTH]
+    return (tile * (SCENE_WIDTH // len(tile) + 3))[start:start + SCENE_WIDTH]
 
 
-def paint(line, text, x):
-    """把 text 画在 line 的第 x 列上。text 里的空格是透明的, 会透出后面的背景"""
-    chars = list(line)
-    for i, ch in enumerate(text):
-        if ch != " " and 0 <= x + i < len(chars):
-            chars[x + i] = ch
-    return "".join(chars)
-
-
-def road_scene(frame, speed):
-    """画出第 frame 帧。speed 是车速 (1 慢, 2 中, 3 快), 越快背景退得越快"""
-    moved = frame * speed
-    rows = [scene_slice(SCENE_SKY, -moved // 6), scene_slice(SCENE_FAR, -moved // 3)]
-    rows += [scene_slice(line, -moved) for line in SCENE_NEAR]
-    rows.append("_" * SCENE_WIDTH)                          # 地平线
-    rows += [" " * SCENE_WIDTH for _ in CAR_ART]            # 车开在这几行
-    rows.append(scene_slice(SCENE_ROAD, -moved))            # 路面
-    top = len(rows) - 1 - len(CAR_ART)
-    for i, part in enumerate(CAR_ART):
-        rows[top + i] = paint(rows[top + i], part, CAR_X)
-    rows[top + 2] = paint(rows[top + 2], DUST[frame % len(DUST)], CAR_X + len(CAR_ART[2].rstrip()))
-    return rows
+def play_frames(frames, delay=None):
+    """一帧一帧地播动画: 画完一帧, 用控制字符 \\x1b[NA 把光标往上移 N 行, 下一帧盖掉上一帧"""
+    enable_ansi()
+    print("\x1b[?25l", end="")   # 先把光标藏起来, 不然它会在画面上一闪一闪
+    try:
+        print()
+        for i, rows in enumerate(frames):
+            if i:
+                print(f"\x1b[{len(rows)}A", end="")   # 光标往上移回画面顶上, 用新的一帧盖掉旧的
+            print("\n".join(rows), flush=True)
+            time.sleep(ANIMATION_DELAY if delay is None else delay)
+    finally:
+        print("\x1b[?25h", end="", flush=True)   # 不管怎么结束 (包括按 Ctrl+C), 都要把光标显示回来
 
 
 def enable_ansi():
@@ -2011,22 +2285,565 @@ def enable_ansi():
         pass
 
 
-def drive_animation(game):
-    """赶路时播放的过场动画。只在真正的终端里和网页版里播放, 跑测试或者用管道输入时不播"""
-    if not ANIMATION or not (can_read_keys() or IN_BROWSER):
+# ---------- 车 ----------
+
+# 车头朝左 (往西开)。1~4 是车窗里的座位, 有人坐就画成 o (司机先坐), 没人就空着
+CAR_ART = [
+    "        _________    ",
+    "  _____/1 2 | 3 4\\__ ",
+    " <________________o_|",
+    "   (@)          (@)  ",
+]
+# 在河里翻过来的车: 轮子朝天
+FLIPPED_CAR = [
+    "   (@)          (@)  ",
+    " <________________o_|",
+    "  ~~~~~\\__ | __/~~~  ",
+]
+DUST = ["  . o ", " o . O", "O  o .", " . O  "]   # 车尾扬起的尘土, 一帧换一个
+
+
+def car_art(people):
+    """车的样子: 车窗里坐着几个人"""
+    rows = []
+    for line in CAR_ART:
+        for seat in "1234":
+            line = line.replace(seat, "o" if int(seat) <= people else " ")
+        rows.append(line)
+    return rows
+
+
+# ---------- 赶路 ----------
+
+# 赶路时车停在中间往西 (左) 开, 背景往右退。远处的山退得慢, 近处的东西退得快, 看起来就有远近
+SCENE_SKY = "       v                       .                  v          "     # 天上盘旋的秃鹫
+SCENE_FAR = "      /\\           __/\\__              /\\/\\          ___/\\_   "   # 远处的山
+SCENE_NEAR = [                                                                  # 近处的废墟、枯树、破车
+    "       _               \\ /                        ._.          ",
+    "     _| |_      __     _|_        ___            |  |    \\|/  ",
+    "    |  |  |    /  \\   |   |      /_x_\\    .      |  |_    |   ",
+]
+# 路面上的裂缝要不规则: 要是每隔 4 格一个, 每帧又正好移 4 格, 看起来就像没动 (跟电影里车轮像是倒着转一个道理)
+SCENE_ROAD = "=  =   =   .  =  =    =   , =  ==   =  .   =  =  "
+CAR_X = 18   # 赶路时车画在第几列
+
+# 天气在动画里的样子: 天气 -> (怎么动, 一长条会循环的花纹, 颜色)
+# 怎么动: 雨每帧往下落一行, 雪两帧落一行, 风横着吹, 雾慢慢飘, 云只在天上
+WEATHER_ART = {
+    "辐射尘云":   ("云", "  (   ~~~   )        (~~   ~~)            (  ~~  ~ )         ", "灰"),
+    "毒雾":       ("雾", "~~~   ~~~~~    ~~  ~~~~     ~~~    ~~~~~  ~~      ", "黄"),
+    "黑雨":       ("雨", "'     ,      '       ,    '        ,     '    ,       ", "灰"),
+    "酸雨":       ("雨", "'     ,      '       ,    '        ,     '    ,       ", "黄"),
+    "辐射风暴":   ("雨", "'     ,      '       ,    '        ,     '    ,       ", "绿"),
+    "灰雪":       ("雪", "*       .      *         .     *       .        *    ", "灰"),
+    "灰色暴风雪": ("风", "-  *  --  .   *  -   --  *   . -  *    --   .  *  - ", "灰"),
+    "辐射沙尘暴": ("风", ".  :  -   .  ~  .  :  -  .   ~  :  .  -   :  .  ~ ", "黄"),
+}
+STORM_CLOUDS = " (~~~~)  ( ~~~ )   (~~~~~)   ( ~~ )  (~~~~~~)  (~~~)   "   # 辐射风暴时天上的绿云
+LIGHTNING = ["  \\", "  /", " / ", " \\ "]                                    # 绿色的闪电
+
+
+def weather_layer(canvas, frame, moved, weather, bottom):
+    """把天气画到画布上 (从最上面画到第 bottom 行)。moved 是背景已经退了几格"""
+    if weather not in WEATHER_ART:
         return
-    enable_ansi()
-    print("\x1b[?25l", end="")   # 先把光标藏起来, 不然它会在画面上一闪一闪
-    try:
-        print()
-        for frame in range(ANIMATION_FRAMES):
-            rows = road_scene(frame, game["pace"])
-            if frame:
-                print(f"\x1b[{len(rows)}A", end="")   # 光标往上移回画面顶上, 用新的一帧盖掉旧的
-            print("\n".join(rows), flush=True)
-            time.sleep(ANIMATION_DELAY)
-    finally:
-        print("\x1b[?25h", end="", flush=True)   # 不管怎么结束 (包括按 Ctrl+C), 都要把光标显示回来
+    how, tile, color = WEATHER_ART[weather]
+    if how == "云":
+        draw(canvas, 0, 0, scene_slice(tile, -moved // 6 - frame // 3), color)
+        return
+    if weather == "辐射风暴":   # 天变绿, 隔一会儿打一个闪电
+        draw(canvas, 0, 0, scene_slice(STORM_CLOUDS, -moved // 6), "绿")
+        if frame % 9 in (4, 5):
+            x = 8 + frame * 7 % 40
+            for i, part in enumerate(LIGHTNING):
+                draw(canvas, 1 + i, x, part, "绿")
+    for y in range(1 if weather == "辐射风暴" else 0, bottom + 1):
+        if how == "雨":      # 每帧往下落一行, 稍微往右斜
+            text = scene_slice(tile, 3 * y - 4 * frame - moved)
+        elif how == "雪":    # 两帧往下落一行
+            text = scene_slice(tile, 5 * y - 6 * (frame // 2) - moved)
+        elif how == "风":    # 横着往左吹得很快
+            text = scene_slice(tile, 7 * y + 5 * frame)
+        else:                # 雾只在半空中, 慢慢飘
+            if not 2 <= y <= 5:
+                continue
+            text = scene_slice(tile, 9 * y + frame // 2 - moved)
+        draw(canvas, y, 0, text, color, behind=(how != "雾"))
+
+
+def road_scene(frame, speed, weather="晴", people=1):
+    """赶路的第 frame 帧。speed 是车速 (1 慢, 2 中, 3 快, 0 是车停着), 越快背景退得越快。
+    weather 是今天的天气, people 是车上有几个人"""
+    moved = frame * speed
+    canvas = new_canvas()
+    draw(canvas, 0, 0, scene_slice(SCENE_SKY, -moved // 6))
+    draw(canvas, 1, 0, scene_slice(SCENE_FAR, -moved // 3))
+    for i, line in enumerate(SCENE_NEAR):
+        draw(canvas, 2 + i, 0, scene_slice(line, -moved))
+    draw(canvas, 5, 0, "_" * SCENE_WIDTH)                    # 地平线
+    draw(canvas, 10, 0, scene_slice(SCENE_ROAD, -moved))     # 路面
+    weather_layer(canvas, frame, moved, weather, 9)
+    car = car_art(people)
+    for i, part in enumerate(car):
+        draw(canvas, 6 + i, CAR_X, part, solid=True)
+    if speed:
+        draw(canvas, 8, CAR_X + len(car[2].rstrip()), DUST[frame % len(DUST)])
+    return canvas_lines(canvas)
+
+
+def drive_animation(game, moving=True):
+    """赶路时播放的过场动画: 天气跟着变, 车窗里能看到车上的人。moving=False 是车开不动、停在原地 (暴风雪)"""
+    if not can_animate():
+        return
+    speed = game["pace"] if moving else 0
+    people = len(game["party"])
+    play_frames(road_scene(frame, speed, game["weather"], people) for frame in range(ANIMATION_FRAMES))
+
+
+# ---------- 过河 ----------
+
+# 河在中间, 两边是河岸; 车从右边 (东岸) 开到左边 (西岸)。第 8 行是地面和水面, 越往下河越窄
+RIVER_ROWS = [
+    "===========\\" + "w" * 36 + "/===========",
+    "############\\" + "w" * 34 + "/############",
+    "#############\\" + "w" * 32 + "/#############",
+]
+RIVER_WAVES = "~  ~~ ~   ~ ~~  ~  ~~~ ~   ~~ ~  ~ ~~~  ~   ~~ "
+FLOAT_BARRELS = " [O]   [O]  [O]   [O] "   # 绑在车身下面的空油桶
+FERRY_RAFT = "|=======================|"
+SPLASH = ["  *  .  * ", " . * ~ * .", "* . ~  . *"]   # 发动机进水、翻车时溅起的水花
+
+
+def river_scene(frame, x, how, sunk=0, flipped=False, splash=False, people=1):
+    """过河的一帧: 车的左边在第 x 列; how 是怎么过河 ("开" "浮" "渡船");
+    sunk 是车在水里往下沉了几行; flipped=True 时车翻了; splash=True 时水花四溅"""
+    canvas = new_canvas()
+    draw(canvas, 0, 0, SCENE_SKY)
+    draw(canvas, 1, 0, SCENE_FAR)
+    if how == "渡船":   # 横过河面的钢缆, 两头拴在岸上的柱子上
+        draw(canvas, 2, 3, "o" + "-" * 52 + "o")
+        for y in range(3, 8):
+            draw(canvas, y, 3, "|")
+            draw(canvas, y, 56, "|")
+        draw(canvas, 3, x + 10, "Y")   # 挂在钢缆上的滑轮
+    for i, line in enumerate(RIVER_ROWS):   # 河岸先画好, 水留着空
+        draw(canvas, 8 + i, 0, line.replace("w", " "))
+    if flipped:
+        for i, part in enumerate(FLIPPED_CAR):
+            draw(canvas, 5 + sunk + i, x, part, solid=True)
+    else:
+        for i, part in enumerate(car_art(people)):
+            draw(canvas, 4 + sunk + i, x, part, solid=True)
+    for i, line in enumerate(RIVER_ROWS):   # 再画水: 水面会盖住车泡在水里的部分
+        start = line.index("w")
+        water = scene_slice(RIVER_WAVES, frame + i * 5)[:line.count("w")]
+        if i == 0:   # 水面: 浪花之间透出车
+            draw(canvas, 8, start, water, "蓝")
+        else:        # 水下: 什么都看不见, 整个盖住
+            for j, ch in enumerate(water):
+                canvas[8 + i][start + j] = [ch, "蓝" if ch != " " else None]
+    if how == "浮" and not flipped and in_river(x):   # 漂在水面上的油桶和渡船的筏子
+        draw(canvas, 8, x, FLOAT_BARRELS)
+    if how == "渡船":
+        draw(canvas, 8, x - 2, FERRY_RAFT, solid=True)
+    if splash:
+        draw(canvas, 3 + sunk, x + 5, SPLASH[frame % len(SPLASH)], "蓝")
+    return canvas_lines(canvas)
+
+
+def in_river(x):
+    """车的左边在第 x 列时, 车身中间是不是在河里"""
+    return 12 <= x + 10 <= 47
+
+
+def river_frames(how, result, people):
+    """过河的整段动画: 一帧一帧的画面。how 是 "开" "浮" "渡船"; result 是 "过去了" "进水" "翻车"。
+    车从东岸开下水, 过了河停在西岸上 (出了事就停在河中间)"""
+    if how == "渡船":   # 渡船慢慢地沿着钢缆横过河面
+        return [river_scene(frame, 26 - frame // 2, how, people=people) for frame in range(28)]
+    sunk_in_water = 0 if how == "浮" else (1 if result == "过去了" else 2)
+    frames = []
+    frame = 0
+    for x in range(44, -1, -2):
+        if result != "过去了" and x <= 20:
+            break   # 开到河中间出事了, 下面接着画
+        frames.append(river_scene(frame, x, how, sunk_in_water if in_river(x) else 0, people=people))
+        frame += 1
+    if result == "进水":     # 熄火停在河中间, 水花四溅; 再慢慢推上岸
+        for i in range(10):
+            frames.append(river_scene(frame + i, 20, how, 2, splash=True, people=people))
+        for i, x in enumerate(range(19, -1, -1)):
+            frames.append(river_scene(frame + 10 + i, x, how, 2 if in_river(x) else 0, people=people))
+    elif result == "翻车":   # 车被急流掀翻, 在水里一沉一浮
+        for i in range(15):   # 最后一帧轮子还露在水面上
+            frames.append(river_scene(frame + i, 20, how, 2 + i % 2, flipped=True, splash=i < 8, people=people))
+    return frames
+
+
+def river_animation(game, how, result):
+    """过河时播放的动画"""
+    if can_animate():
+        play_frames(river_frames(how, result, len(game["party"])))
+
+
+# ---------- 坐木筏 ----------
+
+# 哥伦比亚河峡谷: 远处是雪山, 近处是玄武岩的崖壁和松树。木筏停在中间, 两岸往右退
+GORGE_FAR = "         /\\                         ___         /\\/\\                    "
+GORGE_NEAR = [
+    "  _/|\\_      __/||\\_         _/|\\__      __/|\\_       ",
+    " /|||||\\  ^ /||||||\\  ^  ^  /||||||\\ ^  /|||||\\   ^  ",
+]
+RAFT = "<=O===O===O===O===O==>"
+RAFT_X = 18
+
+
+def raft_scene(frame, people):
+    """坐木筏漂流的第 frame 帧: 车停在木筏上, 河水和两岸往右退"""
+    canvas = new_canvas()
+    draw(canvas, 0, 0, scene_slice(SCENE_SKY, -frame // 2))
+    draw(canvas, 1, 0, scene_slice(GORGE_FAR, -frame // 2))
+    for i, line in enumerate(GORGE_NEAR):
+        draw(canvas, 2 + i, 0, scene_slice(line, -frame))
+    for i, part in enumerate(car_art(people)):
+        draw(canvas, 4 + i, RAFT_X, part, solid=True)
+    for y in range(8, SCENE_HEIGHT):
+        draw(canvas, y, 0, scene_slice(RIVER_WAVES, y * 7 - frame * 3), "蓝")
+    draw(canvas, 8, RAFT_X - 1, RAFT, solid=True)
+    return canvas_lines(canvas)
+
+
+def raft_animation(game):
+    """坐木筏顺流而下的动画"""
+    if can_animate():
+        play_frames(raft_scene(frame, len(game["party"])) for frame in range(ANIMATION_FRAMES))
+
+
+# ---------- 画面: 地标、据点、结局和人 ----------
+
+PICTURE_DELAY = 0.03   # 画面一行一行地画出来, 每行停几秒
+
+
+def picture(text):
+    """把一幅用三引号写的画变成一行一行的字 (去掉头尾的空行和每行后面的空格)"""
+    return [line.rstrip() for line in text.strip("\n").split("\n")]
+
+
+# 走到这些地方时先看一幅画: 名字 -> (画, 颜色)。过河的地方不用, 过河时有动画
+PICTURES = {
+    "灰洞": (picture(r"""
+____
+    \__
+       \__      WINDLASS HILL
+          \__
+             \__              ,@@,      ,@@@,
+                \__         ,@@@@@,   ,@@@@@@,
+                   \__        |||        |||    ,@,
+                      \_______|||________|||____|||____
+"""), None),
+    "法院岩": (picture(r"""
+                    _______
+              _____|       |_____
+             |                   |              __
+          ___|                   |___         _/  \_
+         /                           \       /      \
+   _____/                             \_____/        \______
+"""), None),
+    "烟囱岩": (picture(r"""
+                      _
+                     | |
+                     | |
+                     | |
+                    /   \
+                  _/     \_
+              ___/         \___
+        _____/                 \______
+"""), None),
+    "斯科茨崖": (picture(r"""
+     ________                        __________
+    /  ||  | \____                 _/ |  ||    \
+   /   ||  |   |  \               /   |  ||  |  \
+  /  | ||  |   |   \_____________/  | |  ||  |   \
+ /___|_||__|___|_______________________|__||__|____\
+"""), None),
+    "独立岩": (picture(r"""
+              _.-----------------._
+          _.-'   1846   J.B.      '-._
+       .-'  A.W.     1849    T.F.     '-.
+     _/   1852   M.R.    S.H.  1847      \_
+ ___/_______________________________________\___
+"""), None),
+    "魔鬼门": (picture(r"""
+   ________                    ________
+  |        \                  /        |
+  |         \                /         |
+  |          |      ~~      |          |
+  |          |     ~~~~     |          |
+__|__________|____~~~~~~____|__________|__
+"""), None),
+    "南山口": (picture(r"""
+       /\                                     /\
+      /  \/\         SOUTH PASS          /\/\/  \
+     /      \__     ELEV 7412 FT      __/        \
+    /          \______          _____/            \
+___/                  \________/                   \___
+"""), None),
+    "苏打泉": (picture(r"""
+             o    .   O     .   o
+          .    O    .    o    O    .
+        ___o_____.____O_____.____o___
+       (  ~  ~  o  ~  ~  O  ~  ~  ~  )
+        \___________________________/
+"""), "青"),
+    "美国瀑布": (picture(r"""
+ ___________________________________
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
+ || |  || |  || |  || |  || |  || | |
+ || |  || |  || |  || |  || |  || | |
+ || |  || |  || |  || |  || |  || | |
+~*~~*~~~*~~*~~~*~~*~~~*~~*~~~*~~*~~*~~
+"""), "青"),
+    "鲑鱼瀑布": (picture(r"""
+                       ><>
+  ~~~~~~~~~~~~~\            <><
+  ~~~~~~~~~~~~~ \     ><>
+                 | || | || |       <><
+                 | || | || |
+  ~~~~~~~~~~~~~~~*~~*~~*~~*~~*~~~~~~~~~~~
+"""), "青"),
+    "大圆谷": (picture(r"""
+    /\    /\  /\      /\    /\  /\    /\
+   /  \  /  \/  \    /  \/\/  \/  \  /  \
+  /    \/  ,   ,  \/  ,    ,     ,  \/    \
+ /  ,    ,    ,     ,    ,    ,   ,     ,  \
+/__,___,____,____,____,____,____,____,___,_\
+"""), None),
+    "蓝山": (picture(r"""
+           /\                 /\
+          /^^\     /\        /^^\       /\
+         /^^^^\   /^^\      /^^^^\     /^^\
+    /\  /^^^^^^\ /^^^^\    /^^^^^^\   /^^^^\
+   /^^\/^^^^^^^^V^^^^^^\  /^^^^^^^^\_/^^^^^^\
+  /^^^^^^^^^^^^^^^^^^^^^\/^^^^^^^^^^^^^^^^^^^\
+"""), "蓝"),
+    # 据点: 幸存者用废铁、旧轮胎和沙袋重新围起来的堡垒和贸易站
+    "卡尼堡": (picture(r"""
+        |>
+        |                 _______________
+     ___|___             |  FORT KEARNY  |
+    |  [=]  |            |_______________|
+    |_______|_____________________|_|________
+    | || || || || || || || || || || || || |
+____|_||_||_||_||_||_||_||_||_||_||_||_||_|____
+   (__)(__)(__)(__)(__)(__)(__)(__)(__)(__)
+"""), None),
+    "拉勒米堡": (picture(r"""
+     ____                                     ____
+    |[][]|___________________________________|[][]|
+    |    |    F O R T   L A R A M I E        |    |
+    |    |             .-------.             |    |
+    |    |             |       |             |    |
+ ___|____|_____________|       |_____________|____|___
+"""), None),
+    "布里杰堡": (picture(r"""
+                     (  )
+                      ()
+          ____________||____________
+         /                          \
+        /        FORT BRIDGER        \
+       |==============================|
+       |  [_]    .------.     [_]     |   _[ ]_
+ ______|_________|      |_____________|___|___|___
+"""), None),
+    "霍尔堡": (picture(r"""
+     ___                                  ___
+    /___\        F O R T   H A L L       /___\
+    |[ ]|                                |[ ]|
+    |   |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^|   |
+    |   ||||||||||||||| .---. ||||||||||||   |
+ ___|___||||||||||||||| |   | ||||||||||||___|___
+"""), None),
+    "博伊西堡": (picture(r"""
+         ________________________
+        |   F O R T   B O I S E  |
+     ___|________________________|___
+    |  _      _      _      _       |
+    | |_|    |_|    |_|    |_|      |
+ ___|_______________________________|_______
+  ~   ~~  ~   ~~~   ~  ~~   ~   ~~  ~  ~~~
+ ~~  ~   ~~~  ~   ~~  ~   ~~~  ~   ~~  ~
+"""), None),
+    "达尔斯": (picture(r"""
+  |\                                          /|
+  ||\         T H E   D A L L E S            /||
+  |||\     _____    _____                   /|||
+  ||||\___|[] []|__|[] []|_________________/||||
+  |||||    |    |  |    |                   ||||
+ ~|||||~~~~~~~~~~~~~~~~~~~~~<=O==O==O==O=>~~||||~
+  ~   ~~  ~   ~~~   ~  ~~   ~   ~~  ~  ~~~   ~
+"""), None),
+}
+
+# 开进辐射热点时路边的警告牌
+HOTSPOT_SIGN = picture(r"""
+     ___________________________
+    |  /!\    D A N G E R  /!\  |
+    |    RADIATION   HAZARD     |
+    |___________________________|
+          ||               ||
+   _______||_______________||_______
+""")
+
+# 有人去世时的墓碑
+TOMBSTONE = picture(r"""
+      .-----.
+     /       \
+    |  R.I.P  |
+    |    +    |
+    |         |
+  __|_________|__
+""")
+
+# 结局: 到达俄勒冈城、带着种子到达 (隐藏结局)、全军覆没
+CITY_ART = picture(r"""
+                         |>
+          ____         __|__         ____
+   ______|[][]|_______|     |_______|[][]|______
+  |      |    | OREGON|  _  | CITY  |    |      |
+  |  []  |    |       | | | |       |    |  []  |
+  |______|____|_______|_| |_|_______|____|______|
+ ======================/   \======================
+""")
+FIELD_ART = picture(r"""
+    \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/
+     |    |    |    |    |    |    |    |    |
+  ___|____|____|____|____|____|____|____|____|___
+""")
+WIPEOUT_ART = picture(r"""
+            v           v
+                  v
+                            _________
+                      _____/    |    \__        +     +
+                     <________________o_|       |     |
+                       (@)          (@)       __|__ __|__
+ __________________________________________________________
+""")
+
+# 每个人的样子 (5 行, 不超过 11 个字宽): 主角按性别, 据点里的人按职业, 路上遇到的陌生人都是一个样子
+PORTRAITS = {
+    "男": picture(r"""
+   ,,,,,
+  ( o o )
+   \ - /
+  __|=|__
+ /  | |  \
+"""),
+    "女": picture(r"""
+   .~~~.
+  ( o o )
+  (\ - /)
+  __|=|__
+ /  | |  \
+"""),
+    "老兵": picture(r"""
+   _____
+  /_____\
+  | # o |
+   \ = /
+ _/|*  |\_
+"""),
+    "医生": picture(r"""
+   .-+-.
+  /     \
+ |(o)-(o)|
+   \ - /
+  /|+  |\
+"""),
+    "机械师": picture(r"""
+  (O)-(O)
+  /     \
+  | o o |
+   \ = /
+ ]=|___|\
+"""),
+    "猎人": picture(r"""
+   _.-._
+  (#####)
+  | o o |/
+   \ - //
+  /|  //|\
+"""),
+    "商人": picture(r"""
+    ___
+ __|___|__
+   |o o|
+   \_~_/
+  /|$  |\
+"""),
+    "拾荒者": picture(r"""
+   .---.
+  ( O O )
+  ( [#] )
+   \___/
+  /|===|\
+"""),
+    "陌生人": picture(r"""
+   .---.
+   |o o|
+   |vvv|
+   '---'
+  /|   |\
+"""),
+}
+PORTRAIT_WIDTH = 14   # 头像旁边写字的时候, 字从第几列开始 (每个人都一样, 字才对得齐)
+
+
+def portrait_of(game, name):
+    """这个人长什么样: 据点里的人按职业, 主角按性别, 路上遇到的陌生人都一样"""
+    if name in game["jobs"]:
+        return PORTRAITS[game["jobs"][name]]
+    if name == game["leader"]:
+        return PORTRAITS[game["gender"]]
+    return PORTRAITS["陌生人"]
+
+
+def text_width(text):
+    """一段字在终端里占几格: 中文和全角的标点占两格, 英文、数字和空格占一格"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
+
+
+def wrap_text(text, width):
+    """把一段字切成好几行, 每行在终端里不超过 width 格"""
+    lines = [""]
+    for ch in text:
+        if text_width(lines[-1] + ch) > width:
+            lines.append("")
+        lines[-1] += ch
+    return lines
+
+
+def beside(art, words, color=None, width=None):
+    """把画放在左边、字写在右边, 拼成一行一行。画只用英文字符, 所以每行的字都从同一列开始, 中文也对得齐。
+    width 是字从第几列开始 (不填就是画的宽度再空 3 格); color 是画的颜色 (字不上色)"""
+    width = width or max(len(line) for line in art) + 3
+    rows = []
+    for i in range(max(len(art), len(words))):
+        left = art[i] if i < len(art) else ""
+        right = words[i] if i < len(words) else ""
+        if right:
+            left = left.ljust(width)
+        rows.append((colored(left, color) if left.strip() else left) + right)
+    return rows
+
+
+def show_picture(art, color=None, words=None):
+    """显示一幅画, 一行一行地慢慢画出来; words 是写在画右边的字。只在能播动画的时候显示"""
+    if not can_animate():
+        return
+    print()
+    for row in beside(art, words or [], color):
+        print(row)
+        time.sleep(PICTURE_DELAY)
 
 
 # ========== 开始界面 ==========
@@ -2063,10 +2880,14 @@ def show_help():
     miles = round(TOTAL_DISTANCE * UNITS["英里"])
     capacity_kg = CAR_CAPACITY // 1000
     capacity_lb = round(capacity_kg * WEIGHT_UNITS["英里"][1])
+    difficulties = "、".join(f"{name} {money} 块钱" for name, money, *_ in DIFFICULTIES.values())
+    scores = "、".join(f"{name} ×{score / 100:g}" for name, _, _, _, score, _ in DIFFICULTIES.values())
     print(f"""
 ========== 游戏说明 ==========
 你被赶出了密苏里州独立城地下的避难所, 要开车沿着当年拓荒者走过的俄勒冈小道,
 去 {TOTAL_DISTANCE} 公里 ({miles} 英里) 外的{DESTINATION}。只要还有人活着走到, 就算成功。
+
+开局先选难度 ({difficulties}): 越难, 一开始的钱越少, 路上出事、生病的机会越多。
 
 每天可以选一件事做:
   继续前进  开车赶路, 要用燃料。开得越快越费燃料, 人也越累
@@ -2081,6 +2902,8 @@ def show_help():
   - 车最多装 {capacity_kg} 公斤 ({capacity_lb} 磅), 人也算在里面, 装不下就拿不了。燃料最重, 要算好在哪里补给
   - 天气按走到哪里、几月份变。坏天气车开得慢, 酸雨和辐射风暴天最好躲在车里
   - 辐射会在身体里越积越多, 只有排辐剂能排掉
+  - 有 {len(HOTSPOTS)} 段路靠近核设施, 辐射偏高 (状态栏会提前提醒)。在那里的每一天都要多受辐射,
+    躲在车里能少受一些, 开快一点能少待几天
   - 健康越差越容易生病。生病了要休息, 或者用药品治
   - 路上要过 5 条大河。水浅可以直接开过去, 水深了就绑上空油桶浮过去 (可能翻车),
     有的河边有渡船, 花钱最安全。春天化雪、刚下过雨, 河水都会涨, 等几天水也许会退
@@ -2090,7 +2913,9 @@ def show_help():
   - 3 月出发天冷, 7 月出发天热, 4~6 月最好走
 
 走到{DESTINATION}才算分: 活下来的人越多、越健康分越高, 剩下的物资和钱也能换成分。
-主菜单的「最高分」里记着前 {HIGH_SCORES} 名。
+最后再按难度乘一下: {scores}。主菜单的「最高分」里记着前 {HIGH_SCORES} 名。
+
+游戏有音乐。不想听: 网页版点输入框旁边的「♪」; 在电脑上玩, 把游戏文件开头「游戏设置」里的 MUSIC 改成 False。
 """)
     input("按回车回到主菜单……")
 
@@ -2101,10 +2926,12 @@ def main():
     """主菜单: 开始新游戏、继续游戏、看说明, 或者退出。一局玩完会回到这里"""
     enable_ansi()   # 颜色和动画都要用控制字符, Windows 的终端要先打开这个开关
     while True:
+        play_music("主菜单")
         title_screen()
         saved = load_game()
         if saved:
-            note = f"{date_text(saved)}, 已走 {show_distance(saved, saved['distance'])}"
+            note = (f"{DIFFICULTIES[saved['difficulty']][0]}, {date_text(saved)}, "
+                    f"已走 {show_distance(saved, saved['distance'])}")
         else:
             note = "没有存档"
         print(f"\n1. 开始新游戏\n2. 继续游戏 ({note})\n3. 游戏说明\n4. 最高分\n5. 退出游戏")
@@ -2130,6 +2957,7 @@ def main():
             show_high_scores()
             input("按回车回到主菜单……")
         else:
+            stop_music()
             print("\n下次再见!")
             return
 
@@ -2139,9 +2967,12 @@ def play(game):
     actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: take_medicine,
                6: change_ration, 7: change_pace, 8: show_party, 9: show_diary}
     ending = None   # 走到终点时是哪个结局 (全军覆没就没有, 也不算分)
+    play_music("赶路")
 
     while True:
         if not game["party"]:
+            play_music("全军覆没")
+            show_picture(WIPEOUT_ART, "灰")
             print("\n" + title("结局: 全军覆没", "红"))
             print("所有人都死了。废土上又多了一辆空车……")
             break

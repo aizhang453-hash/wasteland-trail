@@ -5,8 +5,10 @@
 - 存档和最高分: 网页里的 Python 写的文件, 关掉网页就没了。所以每次存档、删存档、记最高分, 都把文件内容交给网页,
   让网页存进浏览器里 (localStorage); 下次打开时, worker.js 会先把它们放回来。
 - 暂停: 动画要一帧一帧地停, 用的是 worker.js 准备好的 sleepMs (在后台线程里真的停下来等)。
+- 音乐: 网页里的 Python 放不了声音, 所以只告诉网页现在该放哪几首 (网页用 music 文件夹里的 .wav 文件放)。
 """
 
+import json
 import os
 import time
 
@@ -44,9 +46,15 @@ def save_high_scores(scores):
             js.saveScoresToPage(f.read())
 
 
+def start_playing(playlist):
+    """换音乐: 把要放的 [(文件, 是不是一直循环), ...] 交给网页去放"""
+    js.musicToPage(json.dumps(playlist))
+
+
 game_file.save_game = save_game
 game_file.delete_save = delete_save
 game_file.save_high_scores = save_high_scores
+game_file.start_playing = start_playing
 time.sleep = lambda seconds: js.sleepMs(int(seconds * 1000))
 
 try:

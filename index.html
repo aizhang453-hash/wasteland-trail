@@ -85,6 +85,15 @@
     gap: 4px;
     margin-top: 6px;
   }
+  #music {
+    color: var(--fg);
+    background: #000;
+    border: 1px solid var(--dim);
+    padding: 8px 10px;
+  }
+  #music.off {
+    color: var(--dim);
+  }
   #keypad button {
     padding: 8px 0;
     color: var(--fg);
@@ -100,6 +109,7 @@
     <input id="answer" aria-label="你的回答" maxlength="200" disabled
            autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="等游戏载入……">
     <button id="send" type="submit" disabled>确定</button>
+    <button id="music" type="button" aria-label="音乐开关">♪ 开</button>
   </form>
   <div id="keypad"></div>
 </div>
@@ -107,6 +117,7 @@
 <script>
   const SAVE_KEY = "wasteland-trail-save";       // 存档在浏览器里的名字
   const SCORES_KEY = "wasteland-trail-scores";   // 最高分榜在浏览器里的名字
+  const MUSIC_KEY = "wasteland-trail-music";     // 音乐开关 ("off" 是关着) 在浏览器里的名字
   const screenBox = document.getElementById("screen");
   const answer = document.getElementById("answer");
   const send = document.getElementById("send");
@@ -225,6 +236,56 @@
     } catch (e) { /* 存不了就算了 */ }
   }
 
+  // ---------- 音乐: 游戏说放哪几首, 这里就用 music 文件夹里的 .wav 一首一首地放 ----------
+  // 浏览器不让网页还没被点过就出声音, 所以开头的音乐要等玩家第一次点网页或者按键时才响
+  const musicButton = document.getElementById("music");
+  let musicOn = readStored(MUSIC_KEY) !== "off";
+  let playlist = [];    // 还要放的: [[文件, 是不是一直循环], ...], 第一首就是正在放的
+  let player = null;    // 正在放的 <audio>
+
+  function playMusic(list) {
+    playlist = list;
+    playFirst();
+  }
+
+  function playFirst() {
+    if (player) {
+      player.onended = null;
+      player.pause();
+      player = null;
+    }
+    if (!musicOn || !playlist.length) return;
+    const [file, loop] = playlist[0];
+    player = new Audio("music/" + file);
+    player.loop = loop;
+    player.onended = () => {   // 放完一段, 接着放下一首 (一般是原来的背景音乐)
+      playlist.shift();
+      playFirst();
+    };
+    player.play().catch(() => { /* 还没被点过, 先不响 */ });
+  }
+
+  function showMusicButton() {
+    musicButton.textContent = musicOn ? "♪ 开" : "♪ 关";
+    musicButton.classList.toggle("off", !musicOn);
+  }
+
+  musicButton.addEventListener("click", () => {
+    musicOn = !musicOn;
+    writeStored(MUSIC_KEY, musicOn ? "" : "off");
+    showMusicButton();
+    playFirst();
+    answer.focus({ preventScroll: true });
+  });
+  showMusicButton();
+
+  // 玩家点了网页或者按了键: 要是音乐因为「还没被点过」没响, 现在放
+  for (const kind of ["pointerdown", "keydown"]) {
+    document.addEventListener(kind, () => {
+      if (musicOn && player && player.paused) player.play().catch(() => {});
+    });
+  }
+
   // ---------- 输入: 把玩家输入的字放进和后台线程共用的内存, 再叫醒它 ----------
   let memory, control, letters;
   let waiting = false;   // 游戏是不是正在等玩家输入
@@ -303,6 +364,7 @@
       else if (message.type === "need-input") askForAnswer();
       else if (message.type === "save") writeStored(SAVE_KEY, message.text);
       else if (message.type === "scores") writeStored(SCORES_KEY, message.text);
+      else if (message.type === "music") playMusic(JSON.parse(message.text));
       else if (message.type === "status") answer.placeholder = message.text || "等游戏开始……";
       else if (message.type === "finished") {
         write("\n—— 游戏已经关掉了。刷新网页可以重新开始。——\n");
