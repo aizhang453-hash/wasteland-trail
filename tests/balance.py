@@ -1,7 +1,7 @@
 """
 难度测试: 让一个"会规划"的电脑玩家玩很多局, 看看各个结局占多少。
 改了游戏里的数字以后, 跑一下这个, 看难度有没有变得太离谱。
-运行方法: 在 game 文件夹里输入 python3 tests/balance.py
+运行方法: 在游戏文件夹 (wasteland-trail) 里输入 python3 tests/balance.py
 想多玩几局: python3 tests/balance.py 5000
 换个难度 (1 简单, 2 普通, 3 困难, 不写就是普通): python3 tests/balance.py 1000 3
 """

@@ -1,6 +1,6 @@
 """
 废土之旅的自动测试。
-运行方法: 在 game 文件夹里输入 python3 -m unittest
+运行方法: 在游戏文件夹 (wasteland-trail) 里输入 python3 -m unittest
 """
 
 import io

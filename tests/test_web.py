@@ -1,7 +1,7 @@
 """
 网页版图形界面的测试: web/gui.py 怎么把选项变成按钮、怎么整理状态; web/run_in_browser.py 交给网页的东西;
 index.html 里画地图用的地名跟游戏里的一样。
-运行方法: 在 game 文件夹里输入 python3 -m unittest (跟别的测试一起跑)
+运行方法: 在游戏文件夹 (wasteland-trail) 里输入 python3 -m unittest (跟别的测试一起跑)
 """
 
 import io
