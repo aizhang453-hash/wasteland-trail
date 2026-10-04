@@ -381,7 +381,8 @@
         answer.placeholder = "刷新网页可以重新开始";
       }
     };
-    worker.onerror = (event) => write("\n网页版出错了: " + event.message + "\n");
+    worker.onerror = (event) => write("\n网页版出错了: " + (event.message || "后台没能把游戏载入") + "\n" +
+      "刷新网页再试一次。还是不行的话, 请到 https://github.com/aizhang453-hash/wasteland-trail/issues 告诉作者用的是什么设备和浏览器。\n");
     write("正在启动废土之旅……\n");
     worker.postMessage({ inputMemory: memory, savedGame: readStored(SAVE_KEY), savedScores: readStored(SCORES_KEY) });
   }
