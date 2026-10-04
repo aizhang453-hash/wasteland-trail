@@ -95,8 +95,11 @@ def hunt_keys(hunting):
 
 
 def hunt_screen(on):
-    """打猎开始、结束时告诉网页: 打猎的时候, 点屏幕就是开枪"""
+    """打猎开始、结束时告诉网页: 打猎的时候, 点屏幕就是开枪。
+    开始的时候先把网页记下的事都拿走扔掉: 上次打猎快结束时多点的、多按的 (比如多按了一下回车) 不能留到这一次"""
     sys.stdout.flush()
+    if on:
+        js.huntEvents()
     js.huntToPage(on)
 
 

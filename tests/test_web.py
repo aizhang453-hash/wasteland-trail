@@ -151,6 +151,31 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(places, route)
         self.assertEqual(hotspots, [name for _, _, name, *_ in w.HOTSPOTS])
 
+    def test_hunt_starts_with_empty_queue(self):
+        """网页: 开始打猎时, 上次打猎快结束时多点的、多按的 (比如多按了一下回车) 都扔掉, 不会让这次一开始就结束"""
+        script = f"""
+import json, sys, types, builtins, runpy, os
+sys.path[:0] = [{ROOT!r}, {os.path.join(ROOT, "web")!r}]
+js = types.ModuleType("js")
+js.guiToPage = js.saveToPage = js.saveScoresToPage = js.musicToPage = js.loopToPage = lambda text: None
+js.sleepMs = lambda ms: None
+js.stopRequested = lambda: False
+js.screenSize = lambda: "61,28"
+pending = ["6000000,7003010"]   # 上次打猎剩下的: 结束 (回车)、点了一下
+js.huntEvents = lambda: pending.pop() if pending else ""
+js.huntToPage = lambda on: None
+sys.modules["js"] = js
+def no_input(prompt=""):
+    raise EOFError
+builtins.input = no_input
+runner = runpy.run_path({os.path.join(ROOT, "web", "run_in_browser.py")!r}, run_name="game")
+runner["hunt_screen"](True)
+print(json.dumps(runner["hunt_keys"]({{}})))
+"""
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, cwd=ROOT, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        self.assertEqual(json.loads(result.stdout.strip().split("\n")[-1]), [])
+
     def test_run_in_browser(self):
         """假装在网页里: 用一个假的 js (网页那边), 让乱按的玩家玩几局, 看看交给网页的东西对不对"""
         script = f"""

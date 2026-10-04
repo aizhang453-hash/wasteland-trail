@@ -712,7 +712,9 @@
     Atomics.store(flags, HUNT_COUNT, count + 1);
   }
 
-  function cellAt(event) {   // 点在屏幕的第几行、第几格
+  function cellAt(event) {   // 点在屏幕的第几行、第几格 (字号还没量好、量不出来就是 null)
+    if (!charWidth || !lineHeight) fitFont();
+    if (!charWidth || !lineHeight) return null;
     const box = screenBox.getBoundingClientRect();
     const style = getComputedStyle(screenBox);
     const x = event.clientX - box.left - parseFloat(style.paddingLeft);
@@ -730,12 +732,15 @@
   screenBox.addEventListener("pointerdown", (event) => {
     if (!hunting) return;
     event.preventDefault();
-    const [r, c] = cellAt(event);
-    tellHunt(7, r, c);
+    const cell = cellAt(event);
+    if (!cell) return;
+    tellHunt(7, cell[0], cell[1]);
   });
   screenBox.addEventListener("pointermove", (event) => {
     if (!hunting || event.pointerType === "touch") return;   // 手指在屏幕上划不算瞄准, 点了才算
-    const [r, c] = cellAt(event);
+    const cell = cellAt(event);
+    if (!cell) return;
+    const [r, c] = cell;
     if (`${r},${c}` === aimedAt) return;
     aimedAt = `${r},${c}`;
     tellHunt(8, r, c);

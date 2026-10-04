@@ -1066,12 +1066,21 @@ class GameTest(unittest.TestCase):
         game["party"] = {"小明": 100}
         game["supplies"]["燃料"] = 115   # 920 + 70 = 990 公斤, 再坐一个人就超载
         screen = io.StringIO()
-        with real_car(), mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(screen):
-            w.offer_recruit(game, "卡尼堡")   # 不丢东西
+        answers = iter(["1", "2"])   # 让杰克加入, 可是坐不下, 不丢东西
+        with real_car(), mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(screen):
+            w.offer_recruit(game, "卡尼堡")
         self.assertEqual(list(game["party"]), ["小明"])
         self.assertIn("超载", screen.getvalue())
-        # 先丢 5 份燃料 (40 公斤) 还不够, 再丢 3 份: 车上 926 公斤, 杰克 (70 公斤) 就坐得下了
-        answers = iter(["1", "3", "5", "0", "1", "3", "3", "0", "1"])   # 丢东西: 燃料 5 份, 不丢了; 还是坐不下, 再丢 3 份; 让杰克加入
+        self.assertIn("摇摇头", screen.getvalue())
+        game = w.new_game()   # 不想带他: 根本不会问要不要丢东西
+        game["party"] = {"小明": 100}
+        game["supplies"]["燃料"] = 115
+        with real_car(), mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()) as screen:
+            w.offer_recruit(game, "卡尼堡")
+        self.assertNotIn("先丢掉一些东西", screen.getvalue())
+        self.assertEqual(game["supplies"]["燃料"], 115)
+        # 带他: 先丢 5 份燃料 (40 公斤) 还不够, 再丢 3 份: 车上 926 公斤, 杰克 (70 公斤) 就坐得下了
+        answers = iter(["1", "1", "3", "5", "0", "1", "3", "3", "0"])   # 让杰克加入; 丢东西: 燃料 5 份, 不丢了; 还是坐不下, 再丢 3 份
         with real_car(), mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.offer_recruit(game, "卡尼堡")
         self.assertEqual(list(game["party"]), ["小明", "杰克"])
@@ -1361,6 +1370,31 @@ class GameTest(unittest.TestCase):
         self.assertLess(doctor["party"]["A"], 100)
         self.assertNotIn("A", doctor["sick"])   # 医生处理过的伤口不会感染
 
+    def test_small_event_details(self):
+        """迷路的日记记在开始那天; 废弃的车里的东西一样都没装上车, 就不写「找到了东西」"""
+        game = new_test_game()
+        with no_new_diseases(), mock.patch.object(w.random, "randint", lambda low, high: high), redirect_stdout(io.StringIO()):
+            w.lost_way(game)
+        self.assertEqual(game["day"], 1 + w.LOST_DAYS[1])
+        self.assertTrue(game["diary"][-1].startswith(w.date_text(game, 1) + " (第 1 天)"))
+        game = w.new_game()
+        game["party"] = {"A": 100}
+        game["supplies"]["水"] = 465   # 70 + 930 = 1000 公斤, 正好装满, 一样都装不下了
+        with real_car(), mock.patch.object(w.random, "random", lambda: 0.1), redirect_stdout(io.StringIO()) as screen:
+            w.abandoned_car(game)
+        self.assertIn("装不下", screen.getvalue())
+        self.assertEqual(game["diary"], [])
+
+    def test_terminal_arrow_key_split_in_two(self):
+        """终端里方向键的三个字被拆成两次送来, 也认得出来"""
+        if w.msvcrt:
+            self.skipTest("Windows 用 msvcrt 读键")
+        chunks = [b"\x1b[", b"A "]
+        with mock.patch.object(w.select, "select", lambda r, wl, x, timeout=None: (r if chunks else [], [], [])), \
+                mock.patch.object(w.os, "read", lambda fd, n: chunks.pop(0)), \
+                mock.patch.object(w.sys.stdin, "fileno", lambda: 0):
+            self.assertEqual(w.hunt_keys({}), [("上",), ("开枪",)])
+
     def test_small_events_on_the_road(self):
         """没遇到大事的话, 还可能遇到小事"""
         game = new_test_game()
@@ -1405,6 +1439,16 @@ class GameTest(unittest.TestCase):
         self.assertNotIn("扎木筏", text)
         self.assertEqual(game["talk"], ["达尔斯", 4])   # 换了地方, 从头说起
 
+    def test_talk_does_not_roll_dice(self):
+        """和人说话说的是这几天大概的水深: 同一天问几次都一样, 也不会动游戏里的随机数 (不影响后面的事)"""
+        game = new_test_game()
+        game["here"], game["distance"] = "卡尼堡", 510
+        random.seed(5)
+        before = random.getstate()
+        lines = [w.talk_river(game) for _ in range(5)]
+        self.assertEqual(len(set(lines)), 1)
+        self.assertEqual(random.getstate(), before)
+
     def test_talk_on_menu(self):
         game = new_test_game()
         answers = iter(["10", "13", "2"])   # 和人说话, 存档, 回到主菜单
@@ -1414,6 +1458,17 @@ class GameTest(unittest.TestCase):
         self.assertIn("在这里歇脚的一个旅人说", screen.getvalue())   # 刚出发, 停在独立城
 
     # ---------- 没燃料 ----------
+
+    def test_stranger_asks_before_dropping(self):
+        """路上的陌生人: 先问带不带; 不带就不会问要不要丢东西 (以前先问丢东西, 丢了又不带, 东西白丢了)"""
+        game = w.new_game()
+        game["party"] = {"小明": 100}
+        game["supplies"]["燃料"] = 115   # 再坐一个人就超载
+        with real_car(), mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()) as screen:
+            w.stranger(game)
+        self.assertIn("失望地走开了", screen.getvalue())
+        self.assertNotIn("先丢掉一些东西", screen.getvalue())
+        self.assertEqual(game["supplies"]["燃料"], 115)
 
     def test_siphon_fuel_when_out_of_fuel(self):
         """车没燃料时搜刮废墟, 会专门到废车里抽油; 有燃料时还是随便翻找"""

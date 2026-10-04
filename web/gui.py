@@ -82,7 +82,7 @@ def game_state(w, game):
     people = len(game["party"])
     weather, temperature = game["weather"], game["temperature"]
     name, km = w.next_place(game)
-    outposts = [n for n, _ in w.OUTPOSTS.values()]
+    outposts = w.OUTPOST_NAMES
     kind = "据点" if name in outposts else "河" if name in w.RIVERS else "终点" if name == w.DESTINATION else "地标"
 
     supplies = []

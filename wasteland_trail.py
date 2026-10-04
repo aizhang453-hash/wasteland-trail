@@ -41,7 +41,7 @@ HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "high
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v3.4"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v3.4.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -76,6 +76,7 @@ OUTPOSTS = {
     2861: ("达尔斯", "哥伦比亚河边, 1850 年在这里建了军营。当年的拓荒者从这里要么顺着大河漂流而下, "
                      "要么走绕过胡德山的巴洛路。"),
 }
+OUTPOST_NAMES = [name for name, _ in OUTPOSTS.values()]   # 据点的名字 (从上面算出来的, 不用改)
 
 # 路上的风景地标(只看不买): 离起点几公里 -> (名字, 介绍)
 LANDMARKS = {
@@ -973,11 +974,12 @@ def catch_diseases(game, hungry, cold_people, traveling):
 
 
 def find_supplies(game):
+    """找到一样随机的东西 (搜刮、仓库、旧车、地堡), 装上车。返回真正装上车的数量 (车满了可能装不下)"""
     item = random.choice(list(LOOT))
     low, high = LOOT[item]
     amount = random.randint(low, high)
     print(f"找到了 {amount} {MEASURES[item]}{item}!")
-    add_supplies(game, item, amount)
+    return add_supplies(game, item, amount)
 
 
 def climate_here(game):
@@ -1274,7 +1276,7 @@ def show_status(game):
     print(f"口粮: {RATIONS[game['ration']][0]}  速度: {PACES[game['pace']][0]}"
           f"  载重: {show_weight(game, load_of(game))} / {show_weight(game, CAR_CAPACITY)}")
     name, km = next_place(game)
-    if name in [n for n, _ in OUTPOSTS.values()]:
+    if name in OUTPOST_NAMES:
         note = " (据点, 可以买东西)"
     elif name in RIVERS:
         note = " (要过河)"
@@ -1479,13 +1481,20 @@ def out_of_fuel(game):
     return game["supplies"]["燃料"] < PACES[game["pace"]][2]
 
 
-def fuel_short(game):
-    """燃料够不够按现在的速度开到下一个据点 (后面没有据点了, 就是到终点): 不够的话返回 (那个地方, 大概要几份燃料),
-    够就返回 None。没算坏天气开得慢 (那样用得更多), 所以只是个大概"""
+def next_supply_stop(game):
+    """下一个能补给的地方: 下一个据点, 后面没有据点了就是终点。返回 (地方, 还有几公里, 照现在的速度大约开几天, 大约要几份燃料)。
+    没算坏天气开得慢 (那样用得更多), 所以只是个大概"""
     ahead = [(km, name) for km, (name, _) in sorted(OUTPOSTS.items()) if km > game["distance"]]
     km, name = ahead[0] if ahead else (TOTAL_DISTANCE, DESTINATION)
     _, per_day, fuel, _ = PACES[game["pace"]]
-    need = -(-(km - game["distance"]) // per_day) * fuel   # 往上取整: 要开几天, 乘每天用的燃料
+    left = max(0, km - game["distance"])
+    days = -(-left // per_day)   # 往上取整
+    return name, left, days, days * fuel
+
+
+def fuel_short(game):
+    """燃料够不够按现在的速度开到下一个据点 (后面没有据点了, 就是到终点): 不够的话返回 (那个地方, 大概要几份燃料), 够就返回 None"""
+    name, _, _, need = next_supply_stop(game)
     return (name, need) if game["supplies"]["燃料"] < need else None
 
 
@@ -1652,10 +1661,11 @@ def drive_status(game):
         notes.append(colored("没吃的了", "红"))
     if s["水"] == 0:
         notes.append(colored("没水了", "红"))
+    short = fuel_short(game)
     if out_of_fuel(game):
         notes.append(colored("没燃料了", "红"))
-    elif fuel_short(game):
-        notes.append(colored(f"燃料不够开到{fuel_short(game)[0]}", "黄"))
+    elif short:
+        notes.append(colored(f"燃料不够开到{short[0]}", "黄"))
     if temperature_level(game["temperature"])[5] and s["冬衣"] < people:
         notes.append(colored("有人没冬衣在受冻", "红"))
     if notes:
@@ -1798,7 +1808,7 @@ def status_panel(game, car):
     people = len(game["party"])
     left = TOTAL_DISTANCE - game["distance"]
     name, km = next_place(game)
-    kind = " (据点)" if name in [n for n, _ in OUTPOSTS.values()] else " (要过河)" if name in RIVERS else ""
+    kind = " (据点)" if name in OUTPOST_NAMES else " (要过河)" if name in RIVERS else ""
     rows = [
         " " + colored(f"{date_text(game)} (第 {game['day']} 天)", "青", bold=True),
         f" 天气: {colored(weather, weather_color(weather))}  {show_temperature(game, temperature)} "
@@ -1840,10 +1850,11 @@ def status_panel(game, car):
         notes.append(colored("没吃的", "红"))
     if s["水"] == 0:
         notes.append(colored("没水", "红"))
+    short = fuel_short(game)
     if out_of_fuel(game):
         notes.append(colored("没燃料", "红"))
-    elif fuel_short(game):
-        notes.append(colored(f"燃料不够到{fuel_short(game)[0]}", "黄"))
+    elif short:
+        notes.append(colored(f"燃料不够到{short[0]}", "黄"))
     if temperature_level(temperature)[5] and s["冬衣"] < people:
         notes.append(colored("有人受冻", "红"))
     if game["seeds"]:
@@ -2090,6 +2101,12 @@ def hunt_keys(hunting):
             if not data:
                 break
             text += data.decode("utf-8", errors="ignore")
+        # 方向键是 ESC [ A 三个字, 偶尔会被拆成两次送来: 结尾只到一半的话, 再等一小会儿后半个
+        while text.endswith(("\x1b", "\x1b[", "\x1bO")) and select.select([sys.stdin], [], [], 0.05)[0]:
+            data = os.read(sys.stdin.fileno(), 64)
+            if not data:
+                break
+            text += data.decode("utf-8", errors="ignore")
         keys = split_keys(text)
     events = []
     for key in keys:
@@ -2310,7 +2327,7 @@ def carry_meat(game, food):
 def trade(game):
     """每天的菜单里的「交易」: 花一天找人换东西。停在据点里人多, 一定找得到人; 在路上不一定碰得到"""
     place = game["here"]
-    at_outpost = place in [name for name, _ in OUTPOSTS.values()]
+    at_outpost = place in OUTPOST_NAMES
     if at_outpost:
         print(f"\n{you(game)}在{place}里转了一天, 找人换东西……")
     else:
@@ -2404,7 +2421,7 @@ def talk(game):
     if not place:
         print("\n四下里一个人影都没有。到了地标、据点这些地方, 再找人问问吧。")
         return
-    outpost = place in [name for name, _ in OUTPOSTS.values()]
+    outpost = place in OUTPOST_NAMES
     talkers = OUTPOST_TALKERS if outpost else ROAD_TALKERS
     tips = random.Random(place).sample(TALK_TIPS, 2)   # 每个地方的人说的提醒不一样, 可同一个地方每次问都一样
     lines = [line for line in (topic(game) for topic in TALK_TOPICS) if line] + tips
@@ -2421,7 +2438,7 @@ def talk_river(game):
     for km, (place, _) in sorted(LANDMARKS.items()):
         if km > game["distance"] and place in RIVERS:
             river, _, _, fare = RIVERS[place]
-            depth = river_depth(game, place)
+            depth = round(usual_depth(game, place), 1)   # 只是大概 (不掷骰子: 同一天问几次都一样, 也不影响别的随机事)
             wade = "车直接开得过去" if depth <= wade_depth(game) else "车直接开过去, 发动机怕是要进水"
             ferry = f"河边有人摆渡, 收 {fare} 块钱" if fare else "那里没有渡船, 只能自己想办法过"
             return (f"再往西 {show_distance(game, km - game['distance'])}就是{river}。"
@@ -2450,14 +2467,11 @@ def talk_weather(game):
 
 def talk_supplies(game):
     """下一个能买东西的据点: 还有多远, 照现在的速度要开几天、用多少燃料"""
-    ahead = [(km, name) for km, (name, _) in sorted(OUTPOSTS.items()) if km > game["distance"]]
-    if not ahead:
+    name, left, days, fuel = next_supply_stop(game)
+    if name == DESTINATION:
         return f"从这里到{DESTINATION}, 路上再也没有能买东西的地方了, 缺什么得自己想办法。"
-    km, name = ahead[0]
-    _, per_day, fuel, _ = PACES[game["pace"]]
-    days = -(-(km - game["distance"]) // per_day)   # 往上取整
-    return (f"下一个能买东西的地方是{name}, 离这里还有 {show_distance(game, km - game['distance'])}。"
-            f"照{you(game)}现在的速度, 得开 {days} 天上下, 燃料要 {days * fuel} 份。")
+    return (f"下一个能买东西的地方是{name}, 离这里还有 {show_distance(game, left)}。"
+            f"照{you(game)}现在的速度, 得开 {days} 天上下, 燃料要 {fuel} 份。")
 
 
 def talk_hotspot(game):
@@ -2662,16 +2676,15 @@ def offer_recruit(game, place, km=None):
     if len(game["party"]) >= MAX_PARTY:
         print(f"这里有个叫 {name} 的{job}也想往西走, 可惜你们的车已经坐满了。")
         return
-    if not has_seat_for_one_more(game):
-        print(f"这里有个叫 {name} 的{job}也想往西走。")
-        if not make_room(game, name):
-            print(f"{name} 摇摇头, 留在了{place}。")
-            return
     brings = "和".join(f" {amount} 份{item}" for item, amount in RECRUIT_BRINGS.items())
     show_picture(PORTRAITS[job], words=["", "", f"{name} ({job})"])
     print(f"这里有个叫 {name} 的{job}也想往西走, 愿意跟{you(game)}一起, 还会带上自己的{brings}。")
     print(f"特长: {SKILLS[job]}。不过多一个人, 每天也要多吃多喝, 天冷时还要多一套冬衣。")
-    if ask_number(f"1. 让{name}加入  2. 不用了  ", 1, 2) == 1:
+    want = ask_number(f"1. 让{name}加入  2. 不用了  ", 1, 2) == 1
+    if want and not make_room(game, name):   # 先问带不带, 带的话车上坐不下再问要不要丢东西
+        print(f"{name} 摇摇头, 留在了{place}。")
+        return
+    if want:
         game["party"][name] = 100
         game["jobs"][name] = job
         print(f"{name} 带着自己的{brings}加入了队伍!")
@@ -2684,11 +2697,15 @@ def offer_recruit(game, place, km=None):
 
 # ========== 过河 ==========
 
-def river_depth(game, place):
-    """今天这条河有多深 (米, 只留一位小数): 平常的水深, 按月份涨落, 这几天下了雨雪还会涨, 每天再有一点随机变化"""
+def usual_depth(game, place):
+    """这几天这条河大概有多深 (米): 平常的水深, 按月份涨落, 这几天下了雨雪还会涨。没算每天的随机变化"""
     month = date_of(game)[0]
-    depth = RIVERS[place][2] * RIVER_SEASON[month - 1] * (1 + RAIN_RISE * game["rain"])
-    return round(depth * random.uniform(0.85, 1.15), 1)
+    return RIVERS[place][2] * RIVER_SEASON[month - 1] * (1 + RAIN_RISE * game["rain"])
+
+
+def river_depth(game, place):
+    """今天这条河有多深 (米, 只留一位小数): 大概的水深 (usual_depth), 每天再有一点随机变化"""
+    return round(usual_depth(game, place) * random.uniform(0.85, 1.15), 1)
 
 
 def wade_depth(game):
@@ -3049,12 +3066,12 @@ def stranger(game):
     if len(game["party"]) >= MAX_PARTY:
         print(f"可惜车上已经坐满了, 只能让 {name} 自己走。")
         return
-    if not make_room(game, name):
-        print(f"只能让 {name} 自己走了。")
-        return
     print("多一个人能多一份力气, 但每天也要多吃多喝。")
     if ask_number(f"1. 让{name}加入  2. 拒绝  ", 1, 2) == 2:
         print(f"{name} 失望地走开了。")
+        return
+    if not make_room(game, name):   # 先问带不带, 带的话车上坐不下再问要不要丢东西 (不然丢了东西又不带人, 白丢了)
+        print(f"只能让 {name} 自己走了。")
         return
     if random.random() < 0.25:
         food = s["食物"] // 4
@@ -3125,12 +3142,12 @@ def lost_way(game):
     days = 1 if hunter else random.randint(*LOST_DAYS)
     if hunter:
         print(f"猎人{hunter}看着太阳和远处的山认出了方向, 只耽误了一天。")
+    write_diary(game, f"迷了路, 耽误了 {days} 天。")   # 会花好几天的事, 在开始那天记
     for _ in range(days):
         pass_day(game, traveling=True)
         if not game["party"]:
             return
     print(f"花了 {days} 天, 才找回原来的路。")
-    write_diary(game, f"迷了路, 耽误了 {days} 天。")
 
 
 def car_fire(game):
@@ -3141,17 +3158,16 @@ def car_fire(game):
     if mechanic:
         print(f"机械师{mechanic}抓起灭火毯扑了上去, 火很快就灭了。")
     burning = [item for item in s if s[item] > 0]
-    burnt = []
-    for item in random.sample(burning, min(1, len(burning))):
+    amount = 0
+    if burning:
+        item = random.choice(burning)
         amount = s[item] * random.randint(*FIRE_BURN) // 100
         if mechanic:
             amount //= 2
-        if amount:
-            s[item] -= amount
-            burnt.append(f"{amount} {MEASURES[item]}{item}")
-    if burnt:
-        print(f"烧掉了{'、'.join(burnt)}。")
-        write_diary(game, f"车着火了, 烧掉了{'、'.join(burnt)}。")
+        s[item] -= amount
+    if amount:
+        print(f"烧掉了 {amount} {MEASURES[item]}{item}。")
+        write_diary(game, f"车着火了, 烧掉了 {amount} {MEASURES[item]}{item}。")
     else:
         print("幸好没烧掉什么东西。")
         write_diary(game, "车着火了, 幸好没烧掉什么东西。")
@@ -3199,22 +3215,25 @@ def clean_spring(game):
 def abandoned_car(game):
     """废弃的车 (原版的 Find an abandoned wagon): 车上还剩些东西, 也许还能拆个零件"""
     print(f"\n{title('废弃的车')}路边翻倒着一辆被扔下的旧车, 车门还开着。")
+    got = 0   # 一共拿上车几样
     if random.random() < 0.5:
-        parts = add_supplies(game, "零件", 1)
-        if parts:
+        if add_supplies(game, "零件", 1):
             print("从车上拆下了 1 个还能用的零件!")
-    find_supplies(game)
-    write_diary(game, "在路边一辆被扔下的旧车里找到了一些东西。")
+            got += 1
+    if find_supplies(game):
+        got += 1
+    if got:
+        write_diary(game, "在路边一辆被扔下的旧车里找到了一些东西。")
 
 
 def rough_road(game):
     """路太难走 (原版的 Rough trail): 慢慢开要多花一天, 硬冲过去可能把车颠坏"""
     print(f"\n{title('路太难走')}前面一段公路被炸得坑坑洼洼, 还有一半塌进了沟里。")
     if ask_number("1. 慢慢开过去 (多花 1 天)  2. 冲过去 (车可能会颠坏)  ", 1, 2) == 1:
+        write_diary(game, "一段烂路, 慢慢开了一整天。")
         pass_day(game, traveling=True)
         if game["party"]:
             print(f"{you(game)}一点一点地把车挪了过去, 花了一整天。")
-            write_diary(game, "一段烂路, 慢慢开了一整天。")
         return
     if random.random() < ROUGH_ROAD_BREAK:
         print("哐当一声, 车颠坏了!")
@@ -4470,7 +4489,7 @@ def play(game):
         # 第一行要花时间, 第二行不花时间, 第三行看看、存档
         print("1. 继续前进  2. 休息  3. 搜刮废墟  4. 打猎  5. 交易")
         print("6. 用药  7. 改变口粮  8. 改变速度  9. 丢东西  10. 和人说话")
-        at_outpost = game["here"] in [name for name, _ in OUTPOSTS.values()]   # 停在据点里, 还能进去买卖东西
+        at_outpost = game["here"] in OUTPOST_NAMES   # 停在据点里, 还能进去买卖东西
         print("11. 查看队伍  12. 旅行日记  13. 存档" + ("  14. 买卖东西" if at_outpost else ""))
         choice = ask_number("你要做什么? ", 1, 14 if at_outpost else 13)
         if choice == 13:
