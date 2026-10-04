@@ -2278,6 +2278,57 @@ class GameTest(unittest.TestCase):
         self.assertIn("车: 停着", text)
         self.assertNotIn("==== 4月1日", text)   # 普通画面的状态栏没出来
 
+    def test_car_remembers_where_it_stopped(self):
+        """像原版那样: 刚出发停在起点; 车开走了就不在什么地方; 开到一个地方就停在那里; 以前的存档也知道"""
+        game = new_test_game()
+        self.assertEqual(game["here"], w.START_PLACE)
+        self.skip_to(game, 515)
+        with self.quiet_road(), redirect_stdout(io.StringIO()):
+            w.drive_one_day(game)
+            self.assertIsNone(game["here"])
+            while "灰洞" not in game["visited"]:
+                w.drive_one_day(game)
+        self.assertEqual(game["here"], "灰洞")
+        with redirect_stdout(io.StringIO()):
+            w.rest(game)
+        self.assertEqual(game["here"], "灰洞")   # 在这里休息, 还是停在这里
+        for distance, here in [(0, w.START_PLACE), (300, None)]:
+            old = new_test_game()
+            old["distance"] = distance
+            del old["here"]
+            with open(w.SAVE_FILE, "w", encoding="utf-8") as f:
+                json.dump(old, f)
+            self.assertEqual(w.load_game()["here"], here)
+
+    def test_place_views(self):
+        """停在每一个地方 (起点、地标、河、据点、辐射热点) 都有画, 正好跟动画一样大, 最下面写着地名; 画里只用英文字符"""
+        game = new_test_game()
+        places = [w.START_PLACE] + [name for name, _ in list(w.LANDMARKS.values()) + list(w.OUTPOSTS.values())]
+        places += [name for _, _, name, *_ in w.HOTSPOTS]
+        for place in places:
+            with self.subTest(place=place):
+                game["here"] = place
+                rows = w.place_view(game)
+                self.assertEqual(len(rows), w.SCENE_HEIGHT)
+                self.assertTrue(all(w.visible_width(row) <= w.SCENE_WIDTH for row in rows))
+                self.assertEqual(rows[-1].strip(), place)
+                self.assertTrue(all(ord(ch) < 128 for row in rows[:-1] for ch in row))
+        game["here"] = None
+        self.assertIsNone(w.place_view(game))
+        self.assertEqual(w.menu_scene(game), w.road_scene(w.screen["frame"], game["pace"], game["weather"], 4, dust=False))
+
+    def test_menu_shows_the_place(self):
+        """每天的菜单上面 (大画面和网页版都是), 停在一个地方就画那个地方"""
+        game = new_test_game()
+        game["here"] = "卡尼堡"
+        with self.screens(wide=True), redirect_stdout(io.StringIO()) as screen:
+            w.show_dashboard(game)
+        self.assertIn("FORT KEARNY", screen.getvalue())
+        self.assertIn("卡尼堡", screen.getvalue())
+        with mock.patch.object(w, "GUI", True), redirect_stdout(io.StringIO()) as screen:
+            w.show_scene(game)
+        self.assertIn("FORT KEARNY", screen.getvalue())
+
     def test_running_out_of_food_is_news_only_the_first_day(self):
         """头一天没吃的是新消息 (要等玩家看), 之后天天都没吃的, 就只是例行消息 (开车时状态栏里提醒)"""
         game = new_test_game()
@@ -2291,6 +2342,16 @@ class GameTest(unittest.TestCase):
             self.assertFalse(w.screen["unread"])
         self.assertEqual(screen.getvalue().count("食物不够了"), 2)
         self.assertIn("没吃的了", w.drive_status(game)[-1])
+        # 劫匪把吃的一下子抢光了: 第二天头一回挨饿, 也要专门说
+        game = new_test_game()
+        game["supplies"]["食物"] = 0
+        with no_new_diseases(), redirect_stdout(io.StringIO()):
+            w.screen["unread"] = False
+            w.pass_day(game)
+            self.assertTrue(w.screen["unread"])
+            game["supplies"]["食物"] = 100   # 打猎打到了, 不饿了
+            w.pass_day(game)
+            self.assertEqual(game["short"], [])
 
     def test_drive_status_fits_on_screen(self):
         """车自己开的时候, 动画下面的状态栏每一行都不超过画面的宽度 (60 格), 人多了分两行"""

@@ -82,12 +82,9 @@ def game_state(w, game):
     outposts = [n for n, _ in w.OUTPOSTS.values()]
     kind = "据点" if name in outposts else "河" if name in w.RIVERS else "终点" if name == w.DESTINATION else "地标"
 
-    cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
-    per_day = {"食物": people * w.RATIONS[game["ration"]][1], "水": people + cholera * w.CHOLERA_WATER,
-               "燃料": w.PACES[game["pace"]][2]}
     supplies = []
     for item, amount in s.items():
-        days = amount // per_day[item] if item in per_day and per_day[item] else None
+        days = w.days_left(game, item) if item in w.daily_need(game) else None
         supplies.append({"name": item, "amount": amount, "measure": w.MEASURES[item], "days": days})
 
     party = []
@@ -143,6 +140,6 @@ def game_state(w, game):
         "loadPercent": min(100, w.load_of(game) * 100 // w.CAR_CAPACITY),
         "ration": w.RATIONS[game["ration"]][0], "pace": w.PACES[game["pace"]][0],
         "party": party, "dead": game["dead"], "notes": notes, "car": car, "diary": diary,
-        "places": places, "destination": w.DESTINATION,
+        "places": places, "destination": w.DESTINATION, "here": game.get("here"),
         "hotspots": [[start, end, spot_name] for start, end, spot_name, *_ in w.HOTSPOTS],
     }

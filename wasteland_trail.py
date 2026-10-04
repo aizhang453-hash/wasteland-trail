@@ -41,10 +41,11 @@ HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "high
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v3.0"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v3.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
+START_PLACE = "独立城"      # 出发的地方 (避难所就在独立城地下)
 DESTINATION = "俄勒冈城"
 TOTAL_DISTANCE = 3119   # 到俄勒冈城的总路程(公里)
 
@@ -337,6 +338,7 @@ DASHBOARD_ROWS = 28       # 窗口至少要有几行才用大画面
 GUI = False
 DIARY_PAGE = 10           # 换画面的时候, 旅行日记一页放几条 (一条常常要占两行)
 PARTY_PAGE = 2            # 换画面的时候, 查看队伍一页放几个人 (每个人都有头像, 要占好几行)
+EVENT_ROOM = 12           # 一直往前开的时候, 动画下面还剩这么多行, 路上的事才写在动画下面 (一件事大概 10 行); 不够就换一个新画面
 DRIVE_DAY_FRAMES = 20     # 一直往前开的时候, 动画播几帧算过了一天 (每帧 ANIMATION_DELAY 秒, 20 帧大约 1.2 秒)
 WARN_WEATHER = ["酸雨", "辐射风暴", "辐射沙尘暴"]   # 一直往前开的时候, 天气变成这几种要提醒一下 (在外面伤人, 也许该停下来躲进车里)
 
@@ -1019,6 +1021,8 @@ def new_game():
         "rads": {},         # 队员名字 -> 辐射值 (0 到 100, 没记的就是 0)
         "sick": {},         # 生病受伤的队员: 名字 -> [病名, 还要几天才好]
         "diary": [],        # 旅行日记: 路上发生的大事, 一条一条记下来
+        "here": START_PLACE,   # 车现在停在哪个地方 (刚到的地标、据点、河、辐射热点); 车一开走就是 None
+        "short": [],        # 昨天不够的东西 ("食物"、"水"): 头一天不够要专门说, 接着不够就只是例行消息
     }
 
 
@@ -1249,16 +1253,13 @@ def show_party(game):
     print("\n---------- 物资还能撑多久 ----------")
     s = game["supplies"]
     people = len(game["party"])
-    ration_name, per_person, _ = RATIONS[game["ration"]]
-    pace_name, km, fuel_per_day, _ = PACES[game["pace"]]
-    food_per_day = people * per_person
-    print(f"食物: {s['食物']} 份。口粮{ration_name}, 每天吃 {food_per_day} 份 (天冷要多吃), "
-          f"还够吃 {s['食物'] // food_per_day} 天")
-    cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
-    water_per_day = people + cholera * CHOLERA_WATER
-    print(f"水: {s['水']} 份。每天喝 {water_per_day} 份 (天热、有人得霍乱要多喝), 还够喝 {s['水'] // water_per_day} 天")
-    fuel_days = s["燃料"] // fuel_per_day
-    print(f"燃料: {s['燃料']} 份。速度{pace_name}, 每天用 {fuel_per_day} 份, "
+    need = daily_need(game)
+    pace_name, km, _, _ = PACES[game["pace"]]
+    print(f"食物: {s['食物']} 份。口粮{RATIONS[game['ration']][0]}, 每天吃 {need['食物']} 份 (天冷要多吃), "
+          f"还够吃 {days_left(game, '食物')} 天")
+    print(f"水: {s['水']} 份。每天喝 {need['水']} 份 (天热、有人得霍乱要多喝), 还够喝 {days_left(game, '水')} 天")
+    fuel_days = days_left(game, "燃料")
+    print(f"燃料: {s['燃料']} 份。速度{pace_name}, 每天用 {need['燃料']} 份, "
           f"还够开 {fuel_days} 天, 大约 {show_distance(game, fuel_days * km)}")
     clothes = f"冬衣: {s['冬衣']} 套, 队伍 {people} 人"
     if s["冬衣"] < people:
@@ -1279,6 +1280,20 @@ def show_party(game):
 
 # ========== 每天发生的事 ==========
 
+def daily_need(game):
+    """按现在的口粮、速度, 每天大概要用多少食物、水、燃料 (有人得霍乱要多喝水; 天冷天热另外还要多一些, 这里不算)"""
+    cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
+    people = len(game["party"])
+    return {"食物": people * RATIONS[game["ration"]][1], "水": people + cholera * CHOLERA_WATER,
+            "燃料": PACES[game["pace"]][2]}
+
+
+def days_left(game, item):
+    """食物、水、燃料还够用几天"""
+    need = daily_need(game)[item]
+    return game["supplies"][item] // need if need else 0
+
+
 def pass_day(game, health_bonus=0, indoors=False, traveling=False):
     """过一天: 吃东西、喝水、更新健康、养病、看看有没有人生病, 再换成明天的天气。
     indoors=True 表示躲在车里, 不受风吹雨打 (但天冷时没穿冬衣还是会冻着, 辐射风暴也挡不住全部),
@@ -1293,15 +1308,17 @@ def pass_day(game, health_bonus=0, indoors=False, traveling=False):
 
     # 食物和水不够的话, 有多少吃多少, 缺得越多健康掉得越多
     hungry = game["ration"] == 1   # 口粮选了"少", 也算挨饿
+    short = []                     # 今天不够的东西
     food_need = people * (per_person + extra_food)
     if s["食物"] >= food_need:
         s["食物"] -= food_need
     else:
         change -= round(10 * (food_need - s["食物"]) / food_need)
-        # 头一天挨饿是新消息 (一直往前开会停下来, 好让玩家想办法); 早就吃光了的话, 再说一遍只是例行消息
-        (print if s["食物"] else print_routine)(f"食物不够了, {everyone(game)}在挨饿!")
+        # 头一天挨饿是新消息 (一直往前开的时候也要专门说, 好让玩家想办法); 昨天就在挨饿, 再说一遍只是例行消息
+        (print_routine if "食物" in game["short"] else print)(f"食物不够了, {everyone(game)}在挨饿!")
         s["食物"] = 0
         hungry = True
+        short.append("食物")
 
     cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
     water_need = people * (1 + extra_water) + cholera * CHOLERA_WATER
@@ -1310,8 +1327,10 @@ def pass_day(game, health_bonus=0, indoors=False, traveling=False):
         s["水"] -= water_need
     else:
         change -= round(15 * (water_need - s["水"]) / water_need)
-        (print if s["水"] else print_routine)(f"干净的水不够了, {everyone(game)}渴得受不了, 只能喝路边的脏水!")
+        (print_routine if "水" in game["short"] else print)(f"干净的水不够了, {everyone(game)}渴得受不了, 只能喝路边的脏水!")
         s["水"] = 0
+        short.append("水")
+    game["short"] = short
 
     change_all_health(game, change)
     cold_people = freeze(game, cold_health)
@@ -1369,6 +1388,7 @@ def drive_one_day(game, animate=True):
         print("\n燃料不够, 车开不动了! 试试换慢一点的速度, 或者去搜刮废墟找燃料。")
         return
     s["燃料"] -= fuel_need
+    game["here"] = None   # 车开走了, 不停在什么地方了 (今天要是又到了一个地方, check_places 会再记上)
     if animate:
         drive_animation(game)
     km = round((km + random.randint(-10, 10)) * speed)
@@ -1399,8 +1419,9 @@ def drive_on(game):
             gui_update(game)         # 网页版的图形界面: 告诉网页今天的状态
             wide = use_dashboard()   # 窗口够大就用大画面 (每天看一次, 窗口拉大拉小也跟得上)
             stuck = WEATHER[game["weather"]][0] > 0 and out_of_fuel(game)   # 燃料不够, 车开不动了
+            parts = dashboard_parts(game, car_word(game, moving=True)) if wide else None   # 大画面的别的几块, 今天不变
             if not stuck:
-                rows, _, moving = drive_screen(game, frame, wide)
+                rows, _, moving = drive_screen(game, frame, wide, parts)
                 builtins.print(redraw(rows) + "\x1b[J", flush=True)
                 screen["unread"] = False
                 # 一天的动画: 一帧一帧地画 (只重画动画那几行), 每画一帧都看看玩家有没有按键, 按了马上停 (这一天还没开完, 不算)
@@ -1408,17 +1429,17 @@ def drive_on(game):
                     frame += 1
                     screen["frame"] = frame
                     if can_animate():
-                        rows, _, moving = drive_screen(game, frame, wide)
+                        rows, _, moving = drive_screen(game, frame, wide, parts)
                         builtins.print("\x1b[?25l" + redraw(rows[:moving]), end="", flush=True)
                     if stop_pressed(ANIMATION_DELAY):
                         return
             # 这一天开完了: 动画 (大画面的话是整个方框) 留着, 擦掉下面的字, 路上发生的事写在下面 (像原版那样车还在画面上)
-            rows, keep, _ = drive_screen(game, frame, wide)
+            rows, keep, _ = drive_screen(game, frame, wide, parts)
             if keep:
                 builtins.print("\x1b[?25h" + redraw(rows[:keep]) + "\n\x1b[J", end="")
             else:
                 clear_screen()
-            screen["room"] = screen_size()[1] - keep >= 12   # 下面放得下一件事 (大概 10 行) 才写在下面, 不然换新画面
+            screen["room"] = screen_size()[1] - keep >= EVENT_ROOM   # 下面放得下一件事才写在下面, 不然换新画面
             weather = game["weather"]
             places = len(game["visited"])
             drive_one_day(game, animate=False)
@@ -1449,13 +1470,13 @@ def drive_frame(game, frame):
     return road_scene(frame, game["pace"] if moving else 0, game["weather"], len(game["party"]))
 
 
-def drive_screen(game, frame, wide):
+def drive_screen(game, frame, wide, parts=None):
     """一直往前开的画面 (像原版那样), 返回 (一行一行的字, 留着的前几行, 动画占了前几行):
     大画面是一个分成几块的方框, 下面一句怎么停车; 普通的画面是动画、怎么停车、状态栏"""
     how = "点一下屏幕或者按回车" if IN_BROWSER else "按回车"
     hint = colored(f"   ({how}停下来, 看看情况)", "灰")
     if wide:
-        box = dashboard_lines(game, drive_frame(game, frame), car_word(game, moving=True))
+        box = dashboard_lines(game, drive_frame(game, frame), car_word(game, moving=True), parts)
         return box + ["", hint], len(box), 1 + SCENE_HEIGHT   # 动画在方框里, 上面还有一行边
     rows = drive_frame(game, frame) if can_animate() else []
     if GUI:   # 网页版的图形界面: 状态在网页的面板里, 停车有按钮, 这里只画动画
@@ -1492,13 +1513,10 @@ def drive_status(game):
         used += width
     lines.append(("队员: " if len(lines) == 1 else "      ") + "  ".join(row))
 
-    # 食物、水、燃料还够几天 (天冷天热、有人得霍乱要吃喝得多一些, 这里按平常算), 只剩 3 天以内是红的
-    cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
-    per_day = {"食物": people * RATIONS[game["ration"]][1], "水": people + cholera * CHOLERA_WATER,
-               "燃料": PACES[game["pace"]][2]}
+    # 食物、水、燃料还够几天 (天冷天热要吃喝得多一些, 这里按平常算), 只剩 3 天以内是红的
     supplies = []
-    for item, need in per_day.items():
-        days = s[item] // need
+    for item in daily_need(game):
+        days = days_left(game, item)
         supplies.append(f"{item} {s[item]} " + colored(f"够 {days} 天", "红" if days <= 3 else None))
     lines.append("  ".join(supplies))
 
@@ -1575,10 +1593,16 @@ def dashboard_border(left_title=None, right_title=None, right=None):
     return "+" + line(left_title, DASH_LEFT) + "+" + fit(right, DASH_RIGHT) + "|"
 
 
-def dashboard_lines(game, scene, car):
-    """大画面, 一行一行的字。scene 是动画的一帧, car 是车现在怎么样 (在开、停着……)"""
-    panel = status_panel(game, car)
-    left = list(scene) + [None] + route_map(game) + [None] + recent_events(game)   # None 是左边一栏里的横线
+def dashboard_parts(game, car):
+    """大画面里除了动画以外的几块: 右边的状态、路线图、最近的事 (开车的时候一天只算一次, 每一帧只换动画)"""
+    return status_panel(game, car), route_map(game), recent_events(game)
+
+
+def dashboard_lines(game, scene, car, parts=None):
+    """大画面, 一行一行的字。scene 是动画的一帧, car 是车现在怎么样 (在开、停着……);
+    parts 是算好的另外几块 (见 dashboard_parts), 不给就现算"""
+    panel, track, events = parts or dashboard_parts(game, car)
+    left = list(scene) + [None] + track + [None] + events   # None 是左边一栏里的横线
     titles = iter(["路线图", "最近的事"])
     rows = [dashboard_border("废土之旅", "状态")]
     for words, right in zip(left, panel):
@@ -1596,15 +1620,44 @@ def gui_update(game):
 
 
 def show_scene(game):
-    """网页版图形界面的每天的菜单上面: 只画车停着的样子 (状态都在网页的面板里)"""
-    scene = road_scene(screen["frame"], game["pace"], game["weather"], len(game["party"]), dust=False)
-    print("\n" + "\n".join(scene))
+    """网页版图形界面的每天的菜单上面: 停在一个地方就画那个地方, 不然画车停在路上 (状态都在网页的面板里)"""
+    print("\n" + "\n".join(menu_scene(game)))
+
+
+def menu_scene(game):
+    """每天的菜单上面那一块 (跟动画一样大): 像原版那样, 停在一个地方就画那个地方, 停在半路就画车停在路上"""
+    return place_view(game) or road_scene(screen["frame"], game["pace"], game["weather"], len(game["party"]),
+                                          dust=False)
+
+
+def place_view(game):
+    """车停在一个地方的时候, 画这个地方的样子, 最下面一行写地名 (正好 SCENE_HEIGHT 行)。没停在什么地方就返回 None。
+    地标和据点用 PICTURES 里的画; 河画车停在对岸; 辐射热点画警告牌; 起点画避难所的门"""
+    here = game.get("here")
+    if not here:
+        return None
+    if here in RIVERS:
+        rows = river_scene(0, 0, "开", people=max(1, len(game["party"])))[:SCENE_HEIGHT - 1]
+    else:
+        if here == START_PLACE:
+            art, color = START_ART, None
+        elif here in PICTURES:
+            art, color = PICTURES[here]
+        elif here in [name for _, _, name, *_ in HOTSPOTS]:
+            art, color = HOTSPOT_SIGN, "紫"
+        else:
+            return None
+        top = (SCENE_HEIGHT - 1 - len(art)) // 2
+        left = (SCENE_WIDTH - max(len(line) for line in art)) // 2
+        rows = [""] * top + [colored(" " * left + line, color) if line.strip() else "" for line in art]
+        rows += [""] * (SCENE_HEIGHT - 1 - len(rows))
+    rows.append(" " * ((SCENE_WIDTH - text_width(here)) // 2) + colored(here, "青", bold=True))
+    return rows
 
 
 def show_dashboard(game):
-    """每天的菜单上面的大画面: 车停着, 动画停在开车停下来的那一帧"""
-    scene = road_scene(screen["frame"], game["pace"], game["weather"], len(game["party"]), dust=False)
-    print("\n".join(dashboard_lines(game, scene, car_word(game, moving=False))))
+    """每天的菜单上面的大画面: 车停着; 停在一个地方就画那个地方, 不然画面停在开车停下来的那一帧"""
+    print("\n".join(dashboard_lines(game, menu_scene(game), car_word(game, moving=False))))
 
 
 def car_word(game, moving):
@@ -1635,11 +1688,8 @@ def status_panel(game, car):
         f" 已走 {show_distance(game, game['distance'])}, 还剩 {show_distance(game, left)}",
         "",
     ]
-    cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
-    per_day = {"食物": people * RATIONS[game["ration"]][1], "水": people + cholera * CHOLERA_WATER,
-               "燃料": PACES[game["pace"]][2]}
-    for item, need in per_day.items():
-        days = s[item] // need
+    for item in daily_need(game):
+        days = days_left(game, item)
         rows.append(f" {item} {s[item]} {MEASURES[item]}  " + colored(f"够 {days} 天", "红" if days <= 3 else None))
     rows += [
         f" 子弹 {s['子弹']}  药品 {s['药品']}  排辐剂 {s['排辐剂']}",
@@ -1656,6 +1706,7 @@ def status_panel(game, car):
         if radiation_level(rads)[2]:
             words += " " + colored(f"辐射{rads}", "紫")
         rows.append(words)
+    rows = rows[:DASH_ROWS - 2]   # 人再多也不会挤掉最后两行 (现在最多 4 个人, 正好放得下)
     rows += [""] * (DASH_ROWS - 2 - len(rows))
 
     notes = []   # 天天都有的事, 开车的时候不会专门说
@@ -1928,6 +1979,7 @@ def check_places(game):
     for km, name, intro, kind in sorted(places):
         if not reached(game, km, name):
             continue
+        game["here"] = name    # 像原版那样停在这里, 每天的菜单上面画这个地方 (见 place_view)
         new_screen()           # 每到一个地方都换一个画面
         if name in PICTURES:   # 先看一眼那里的样子
             show_picture(*PICTURES[name])
@@ -2606,6 +2658,8 @@ def load_game():
     for start, _, name, _, _, _ in HOTSPOTS:   # 旧存档里已经开进去 (或者开过去) 的辐射热点, 不用再提醒
         if game["distance"] >= start and name not in game["visited"]:
             game["visited"].append(name)
+    if "here" not in saved:   # 以前的存档不知道车停在哪, 只知道还没出发的话是在起点
+        game["here"] = START_PLACE if game["distance"] == 0 else None
     return game
 
 
@@ -3231,6 +3285,16 @@ ____|_||_||_||_||_||_||_||_||_||_||_||_||_|____
   ~   ~~  ~   ~~~   ~  ~~   ~   ~~  ~  ~~~   ~
 """), None),
 }
+
+# 出发的地方: 独立城外面山坡上避难所的大门, 路边一块牌子
+START_ART = picture(r"""
+            _.-''''''''''''-._           ______________
+        _.-'    .--------.    '-._      | INDEPENDENCE |
+     .-'      .'  .----.  '.      '-.   |______MO______|
+   .'        /   /  ()  \   \        '.       ||
+  /         |   |  -/\-  |   |         \      ||
+_/__________|___|________|___|__________\_____||_______
+""")
 
 # 开进辐射热点时路边的警告牌
 HOTSPOT_SIGN = picture(r"""

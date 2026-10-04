@@ -347,6 +347,19 @@
 
   let follow = false;   // 画面要不要滚到最下面 (有新的字印出来就要; 主菜单的动画换帧不用)
 
+  // 中文字在终端里占两格: 这里也是, 字放在第一格, 第二格放一个看不见的 PAD (画的时候去掉)。
+  // 这样光标第几格就是屏幕上第几列, 用新的字盖掉旧的 (比如开车时每天的状态), 跟真的终端一样不会留下旧字
+  const PAD = "\u0000";
+  const WIDE_CHAR = /^[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF01-\uFF60\uFFE0-\uFFE6]$/;
+
+  function put(r, c, ch, style) {   // 在第 r 行第 c 格放一个字
+    const line = lines[r].padEnd(c);
+    lines[r] = line.slice(0, c) + ch + line.slice(c + 1);
+    const rowLooks = looks[r];
+    while (rowLooks.length < c) rowLooks.push("");   // 补上的空格用默认颜色
+    rowLooks[c] = style;
+  }
+
   function write(text, scrollDown = true) {
     if (scrollDown) follow = true;
     text = unfinished + text;
@@ -404,12 +417,13 @@
         col = 0;
         continue;
       }
-      const line = lines[row].padEnd(col);
-      lines[row] = line.slice(0, col) + ch + line.slice(col + 1);
-      const rowLooks = looks[row];
-      while (rowLooks.length < col) rowLooks.push("");   // 补上的空格用默认颜色
-      rowLooks[col] = look;
-      col++;
+      const wide = WIDE_CHAR.test(ch);
+      const next = col + (wide ? 2 : 1);
+      if (lines[row][col] === PAD && col > 0) put(row, col - 1, " ", "");   // 盖住了一个中文字的后一半: 前一半也擦掉
+      put(row, col, ch, look);
+      if (wide) put(row, col + 1, PAD, look);
+      if (lines[row][next] === PAD) put(row, next, " ", "");   // 盖住了一个中文字的前一半: 后一半也擦掉
+      col = next;
     }
     // 只留最近的 2000 行, 免得玩久了网页越来越慢
     if (lines.length > 2000) {
@@ -458,7 +472,7 @@
         const style = rowLooks[start] || "";
         let end = start + 1;
         while (end < line.length && (rowLooks[end] || "") === style) end++;
-        const text = markWide(escapeHtml(line.slice(start, end)));
+        const text = markWide(escapeHtml(line.slice(start, end).split(PAD).join("")));
         parts.push(style ? `<span class="${style}">${text}</span>` : text);
         start = end;
       }
@@ -657,6 +671,7 @@
 
   document.getElementById("bar").addEventListener("submit", (event) => {
     event.preventDefault();
+    if (!waiting) return;   // 游戏还在忙 (比如画还没画完): 打的字先留着, 等问到的时候再按
     const text = answer.value;
     answer.value = "";
     submitAnswer(text);
@@ -776,7 +791,7 @@
 
   function lastLine() {
     for (let r = lines.length - 1; r >= 0; r--) {
-      if (lines[r].trim()) return lines[r].trim();
+      if (lines[r].trim()) return lines[r].split(PAD).join("").trim();
     }
     return "";
   }
@@ -814,6 +829,7 @@
             `<span class="${color(s.temperatureColor)}">${escapeHtml(s.temperatureWord)}</span></div>`;
     html += `<div class="line small muted">${escapeHtml(s.weatherNote)}</div>`;
     html += `<h3>路程</h3>${meter(s.km * 100 / s.total)}`;
+    if (s.here) html += `<div class="line">停在: <b class="c36">${escapeHtml(s.here)}</b></div>`;
     html += `<div class="line small">已走 ${escapeHtml(s.traveled)}, 还剩 ${escapeHtml(s.left)}</div>`;
     html += `<div class="line">下一站: <b>${escapeHtml(s.next.name)}</b> <span class="muted">(${escapeHtml(s.next.kind)})</span></div>`;
     html += `<div class="line small">还有 ${escapeHtml(s.next.distance)} · 车: <span class="${s.car ? "c31" : ""}">${escapeHtml(car)}</span></div>`;
@@ -888,12 +904,15 @@
     const shrink = Math.cos(42 * Math.PI / 180);   // 经线越往北越近, 横着要缩一点
     const lons = all.map(([, lon]) => lon * shrink);
     const lats = all.map(([lat]) => lat);
+    const west = Math.min(...lons);
+    const north = Math.max(...lats);
+    const across = Math.max(...lons) - west;
+    const down = north - Math.min(...lats);
     const pad = 22;
-    const scale = Math.min((width - 2 * pad) / (Math.max(...lons) - Math.min(...lons)),
-                           (height - 2 * pad) / (Math.max(...lats) - Math.min(...lats)));
-    const left = (width - scale * (Math.max(...lons) - Math.min(...lons))) / 2;
-    const top = (height - scale * (Math.max(...lats) - Math.min(...lats))) / 2;
-    const point = ([lat, lon]) => [left + (lon * shrink - Math.min(...lons)) * scale, top + (Math.max(...lats) - lat) * scale];
+    const scale = Math.min((width - 2 * pad) / across, (height - 2 * pad) / down);
+    const left = (width - scale * across) / 2;
+    const top = (height - scale * down) / 2;
+    const point = ([lat, lon]) => [left + (lon * shrink - west) * scale, top + (north - lat) * scale];
 
     // 每个地方离起点几公里 (有状态的时候才知道), 算出车在哪
     const km = { "独立城": 0 };
