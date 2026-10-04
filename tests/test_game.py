@@ -843,6 +843,7 @@ class GameTest(unittest.TestCase):
                     game["rads"] = {name: 100 for name in game["party"]}
                     for item in game["supplies"]:
                         game["supplies"][item] = 9999
+                    game["supplies"]["燃料"] = distance % 2   # 一半没燃料, 一半燃料不够开到下一个据点
                     with redirect_stdout(io.StringIO()) as screen:
                         w.show_status(game)
                     for line in re.sub(r"\x1b\[[\d;]*m", "", screen.getvalue()).split("\n"):
@@ -1411,6 +1412,68 @@ class GameTest(unittest.TestCase):
             w.play(game)
         self.assertIn("10. 和人说话", screen.getvalue())
         self.assertIn("在这里歇脚的一个旅人说", screen.getvalue())   # 刚出发, 停在独立城
+
+    # ---------- 没燃料 ----------
+
+    def test_siphon_fuel_when_out_of_fuel(self):
+        """车没燃料时搜刮废墟, 会专门到废车里抽油; 有燃料时还是随便翻找"""
+        game = new_test_game()
+        game["supplies"]["燃料"] = 0
+        with no_new_diseases(), mock.patch.object(w.random, "random", lambda: 0.99), \
+                mock.patch.object(w.random, "randint", lambda low, high: high), redirect_stdout(io.StringIO()) as screen:
+            w.scavenge(game)
+        self.assertIn("到附近的废车里找油", screen.getvalue())
+        self.assertEqual(game["supplies"]["燃料"], w.SIPHON_FUEL[1])
+        self.assertIn(f"抽出 {w.SIPHON_FUEL[1]} 份燃料", game["diary"][-1])
+        game["supplies"]["燃料"] = 0   # 运气不好: 油箱都是空的
+        with no_new_diseases(), mock.patch.object(w.random, "random", lambda: 0.2 + w.SIPHON_EMPTY / 2), \
+                redirect_stdout(io.StringIO()) as screen:
+            w.scavenge(game)
+        self.assertIn("油箱都是空的", screen.getvalue())
+        self.assertEqual(game["supplies"]["燃料"], 0)
+        game = new_test_game()
+        with no_new_diseases(), redirect_stdout(io.StringIO()) as screen:
+            w.scavenge(game)
+        self.assertIn("搜刮附近的废墟", screen.getvalue())
+
+    def test_fuel_warning(self):
+        """燃料不够开到下一个据点时, 状态栏、开车时的状态、网页面板都提醒; 没燃料了另外说"""
+        import web.gui as gui
+        game = new_test_game()
+        game["here"], game["distance"] = "卡尼堡", 510   # 到拉勒米堡 489 公里, 中速一天 105 公里: 5 天, 10 份燃料
+        game["supplies"]["燃料"] = 9
+        self.assertEqual(w.fuel_short(game), ("拉勒米堡", 10))
+        with redirect_stdout(io.StringIO()) as screen:
+            w.show_status(game)
+        self.assertIn("燃料不够开到拉勒米堡了 (照现在的速度大约要 10 份)", screen.getvalue())
+        self.assertIn("燃料不够开到拉勒米堡", "\n".join(w.drive_status(game)))
+        self.assertIn(["黄", "燃料不够开到拉勒米堡了 (大约要 10 份)"], gui.game_state(w, game)["notes"])
+        game["supplies"]["燃料"] = 10
+        self.assertIsNone(w.fuel_short(game))
+        game["supplies"]["燃料"] = 0
+        with redirect_stdout(io.StringIO()) as screen:
+            w.show_status(game)
+        self.assertIn("没燃料了", screen.getvalue())
+        game["distance"] = 2900   # 过了达尔斯 (走巴洛路), 算到终点
+        self.assertEqual(w.fuel_short(game)[0], w.DESTINATION)
+
+    def test_shop_from_menu_at_outpost(self):
+        """停在据点里, 每天的菜单多一个「14. 买卖东西」; 不在据点就没有"""
+        game = new_test_game()
+        game["here"], game["distance"] = "卡尼堡", 510
+        answers = iter(["14", "1", "10", "0", "13", "2"])   # 买卖东西, 买 10 份食物, 离开, 存档, 回到主菜单
+        with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()) as screen:
+            w.play(game)
+        self.assertIn("13. 存档  14. 买卖东西", screen.getvalue())
+        self.assertEqual(game["supplies"]["食物"], 110)
+        self.assertEqual(game["money"], 500 - 12)   # 卡尼堡贵 15%
+        game = new_test_game()
+        game["here"] = "灰洞"
+        answers = iter(["14", "13", "2"])   # 不在据点: 14 不算数
+        with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()) as screen:
+            w.play(game)
+        self.assertNotIn("买卖东西", screen.getvalue())
+        self.assertIn("请输入 1 到 13 之间的数字", screen.getvalue())
 
     # ---------- 休息几天、丢东西 ----------
 

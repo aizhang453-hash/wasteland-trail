@@ -41,7 +41,7 @@ HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "high
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v3.3"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v3.4"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -364,6 +364,9 @@ INFECTION_CHANCE = 0.5      # 被咬伤、中枪以后伤口感染的机会
 TETANUS_CHANCE = 0.08       # 搜刮废墟时被生锈的铁皮划伤、得破伤风的机会
 SOLO_SICK_DAMAGE = 2        # 一个人生病没人照顾 (烧水做饭开车都得自己来), 每天多掉的健康
 
+# 车没燃料的时候去搜刮废墟, 会专门到路边的废车里抽油: 一次能抽到几份燃料 (最少, 最多); 有拾荒者多一半
+SIPHON_FUEL = (1, 3)
+SIPHON_EMPTY = 0.4   # 翻了好几辆废车, 油箱都是空的的机会 (没碰上野狗的时候; 有拾荒者就不会空手)
 # 搜刮时可能找到的东西: 名字 -> (最少, 最多)
 LOOT = {"食物": (10, 40), "水": (10, 30), "燃料": (3, 10),
         "子弹": (10, 30), "零件": (1, 1), "药品": (1, 2), "冬衣": (1, 2), "排辐剂": (1, 1)}
@@ -1278,6 +1281,11 @@ def show_status(game):
     else:
         note = ""
     print(f"下一站: {name}{note}, 还有 {show_distance(game, km - game['distance'])}")
+    short = fuel_short(game)
+    if out_of_fuel(game):
+        print(colored("注意: 没燃料了, 车开不动。去搜刮废墟会专门到废车里抽油, 也可以找人交易", "红"))
+    elif short:
+        print(colored(f"注意: 燃料不够开到{short[0]}了 (照现在的速度大约要 {short[1]} 份)", "黄"))
     spot = hotspot_here(game)
     ahead = next_hotspot(game)
     if spot:
@@ -1471,6 +1479,16 @@ def out_of_fuel(game):
     return game["supplies"]["燃料"] < PACES[game["pace"]][2]
 
 
+def fuel_short(game):
+    """燃料够不够按现在的速度开到下一个据点 (后面没有据点了, 就是到终点): 不够的话返回 (那个地方, 大概要几份燃料),
+    够就返回 None。没算坏天气开得慢 (那样用得更多), 所以只是个大概"""
+    ahead = [(km, name) for km, (name, _) in sorted(OUTPOSTS.items()) if km > game["distance"]]
+    km, name = ahead[0] if ahead else (TOTAL_DISTANCE, DESTINATION)
+    _, per_day, fuel, _ = PACES[game["pace"]]
+    need = -(-(km - game["distance"]) // per_day) * fuel   # 往上取整: 要开几天, 乘每天用的燃料
+    return (name, need) if game["supplies"]["燃料"] < need else None
+
+
 def drive_one_day(game, animate=True):
     """开一天车: 路过的地方、路上的事、一天的吃喝, 都在这里。animate=False 是不播这一天的动画 (一直往前开的时候, 动画另外一直在播)"""
     s = game["supplies"]
@@ -1484,7 +1502,7 @@ def drive_one_day(game, animate=True):
         pass_day(game, indoors=True)
         return
     if out_of_fuel(game):
-        print("\n燃料不够, 车开不动了! 试试换慢一点的速度, 或者去搜刮废墟找燃料。")
+        print("\n燃料不够, 车开不动了! 可以换慢一点的速度, 去搜刮废墟 (会专门到废车里抽油), 或者找人交易。")
         return
     s["燃料"] -= fuel_need
     game["here"] = None   # 车开走了, 不停在什么地方了 (今天要是又到了一个地方, check_places 会再记上)
@@ -1634,6 +1652,10 @@ def drive_status(game):
         notes.append(colored("没吃的了", "红"))
     if s["水"] == 0:
         notes.append(colored("没水了", "红"))
+    if out_of_fuel(game):
+        notes.append(colored("没燃料了", "红"))
+    elif fuel_short(game):
+        notes.append(colored(f"燃料不够开到{fuel_short(game)[0]}", "黄"))
     if temperature_level(game["temperature"])[5] and s["冬衣"] < people:
         notes.append(colored("有人没冬衣在受冻", "红"))
     if notes:
@@ -1818,6 +1840,10 @@ def status_panel(game, car):
         notes.append(colored("没吃的", "红"))
     if s["水"] == 0:
         notes.append(colored("没水", "红"))
+    if out_of_fuel(game):
+        notes.append(colored("没燃料", "红"))
+    elif fuel_short(game):
+        notes.append(colored(f"燃料不够到{fuel_short(game)[0]}", "黄"))
     if temperature_level(temperature)[5] and s["冬衣"] < people:
         notes.append(colored("有人受冻", "红"))
     if game["seeds"]:
@@ -1907,7 +1933,13 @@ def rest_days(game, days):
 
 
 def scavenge(game):
-    print(f"\n{you(game)}花了一天搜刮附近的废墟……")
+    """每天的菜单里的「搜刮废墟」(花一天): 随便翻找, 也许能找到东西, 也可能碰上野狗。
+    车没燃料了的话, 就专门到路边的废车里抽油 (比随便翻找容易找到燃料)"""
+    siphon = out_of_fuel(game)
+    if siphon:
+        print(f"\n车没燃料了, {you(game)}花了一天, 到附近的废车里找油……")
+    else:
+        print(f"\n{you(game)}花了一天搜刮附近的废墟……")
     pass_day(game)
     if not game["party"]:
         return
@@ -1915,6 +1947,16 @@ def scavenge(game):
     scavenger = skilled(game, "拾荒者")
     if roll < 0.2:
         mutant_attack(game)
+    elif siphon and (scavenger or roll >= 0.2 + SIPHON_EMPTY):
+        fuel = random.randint(*SIPHON_FUEL)
+        if scavenger:
+            fuel = fuel * 3 // 2
+            print(f"拾荒者{scavenger}知道哪种车的油箱里还剩着油。")
+        fuel = add_supplies(game, "燃料", fuel)
+        print(f"从几辆废车的油箱里抽出了 {fuel} 份燃料。")
+        write_diary(game, f"车没燃料了, 从路边的废车里抽出 {fuel} 份燃料。")
+    elif siphon:
+        print("翻了好几辆废车, 油箱都是空的。")
     elif scavenger:
         print(f"拾荒者{scavenger}知道该往哪儿翻。")
         for _ in range(2):
@@ -2348,6 +2390,11 @@ def drop(game):
             s[item] -= amount
             note = f"扔掉了 {amount} {MEASURES[item]}{item}, 车轻了 {show_weight(game, amount * WEIGHTS[item])}。"
             write_diary(game, f"扔掉了 {amount} {MEASURES[item]}{item}。")
+
+
+def shop_here(game):
+    """每天的菜单里的「买卖东西」: 只有停在据点里的时候才有 (原版在堡垒里随时能买东西), 不花时间"""
+    shop(game, can_sell=True)
 
 
 def talk(game):
@@ -4321,6 +4368,7 @@ def show_help():
 路上要注意:
   - 每人每天都要吃要喝。天热要多喝水, 天冷要多吃东西, 还得每人一套冬衣
   - 车最多装 {capacity_kg} 公斤 ({capacity_lb} 磅), 人也算在里面。燃料最重, 要算好在哪里补给
+  - 没燃料了就去搜刮废墟, 会专门到废车里抽油。停在据点时, 随时能买卖东西
   - 天气按走到哪里、几月份变。坏天气车开得慢, 酸雨和辐射风暴天最好躲在车里
   - 辐射会在身体里越积越多, 只有排辐剂能排掉
   - 有 {len(HOTSPOTS)} 段路靠近核设施, 辐射偏高 (状态栏会提前提醒), 开快点、躲在车里能少受些
@@ -4396,7 +4444,7 @@ def main():
 def play(game):
     """玩一局, 直到走到终点、全军覆没, 或者存档后回到主菜单"""
     actions = {1: travel, 2: rest, 3: scavenge, 4: hunt, 5: trade, 6: take_medicine,
-               7: change_ration, 8: change_pace, 9: drop, 10: talk, 11: show_party, 12: show_diary}
+               7: change_ration, 8: change_pace, 9: drop, 10: talk, 11: show_party, 12: show_diary, 14: shop_here}
     ending = None   # 走到终点时是哪个结局 (全军覆没就没有, 也不算分)
     play_music("赶路")
 
@@ -4422,8 +4470,9 @@ def play(game):
         # 第一行要花时间, 第二行不花时间, 第三行看看、存档
         print("1. 继续前进  2. 休息  3. 搜刮废墟  4. 打猎  5. 交易")
         print("6. 用药  7. 改变口粮  8. 改变速度  9. 丢东西  10. 和人说话")
-        print("11. 查看队伍  12. 旅行日记  13. 存档")
-        choice = ask_number("你要做什么? ", 1, 13)
+        at_outpost = game["here"] in [name for name, _ in OUTPOSTS.values()]   # 停在据点里, 还能进去买卖东西
+        print("11. 查看队伍  12. 旅行日记  13. 存档" + ("  14. 买卖东西" if at_outpost else ""))
+        choice = ask_number("你要做什么? ", 1, 14 if at_outpost else 13)
         if choice == 13:
             save_game(game)
             if ask_number("1. 继续玩  2. 回到主菜单  ", 1, 2) == 2:

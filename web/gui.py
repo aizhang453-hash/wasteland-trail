@@ -108,6 +108,11 @@ def game_state(w, game):
         notes.append(["红", "没吃的了"])
     if s["水"] == 0:
         notes.append(["红", "没有干净的水了"])
+    short = w.fuel_short(game)
+    if w.out_of_fuel(game):
+        notes.append(["红", "没燃料了, 去搜刮废墟会专门到废车里抽油"])
+    elif short:
+        notes.append(["黄", f"燃料不够开到{short[0]}了 (大约要 {short[1]} 份)"])
     if w.temperature_level(temperature)[5] and s["冬衣"] < people:
         notes.append(["红", "冬衣不够, 有人在受冻"])
     if game["seeds"]:

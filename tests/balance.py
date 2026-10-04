@@ -216,6 +216,9 @@ def novice(game_box, screen, month):
         s, party = game["supplies"], game["party"]
         if "要进去买卖东西" in prompt:             # 据点: 有钱的话进去, 先补快用完的 (状态栏写着够几天), 再随便买点别的
             short = [choice for choice, item in [("2", "水"), ("1", "食物"), ("3", "燃料")] if w.days_left(game, item) < 10]
+            if w.fuel_short(game) and "3" in short:   # 状态栏写着「燃料不够开到下一个据点」: 先买燃料
+                short.remove("3")
+                short.insert(0, "3")
             shopping[:] = short + [choice for choice in ["3", "1", "2"] if choice not in short and rng.random() < 0.5]
             budget[0] = None
             return "1" if shopping and game["money"] >= 10 else "2"
