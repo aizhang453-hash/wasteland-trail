@@ -32,6 +32,7 @@ self.onmessage = async (event) => {
   self.saveToPage = (text) => postMessage({ type: "save", text: text });
   self.saveScoresToPage = (text) => postMessage({ type: "scores", text: text });
   self.musicToPage = (text) => postMessage({ type: "music", text: text });
+  self.loopToPage = (text) => postMessage({ type: "loop", text: text });
 
   postMessage({ type: "status", text: "正在载入游戏……" });
   const game = await (await fetch("../wasteland_trail.py", { cache: "no-cache" })).text();

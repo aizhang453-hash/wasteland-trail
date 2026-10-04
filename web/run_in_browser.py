@@ -6,10 +6,12 @@
   让网页存进浏览器里 (localStorage); 下次打开时, worker.js 会先把它们放回来。
 - 暂停: 动画要一帧一帧地停, 用的是 worker.js 准备好的 sleepMs (在后台线程里真的停下来等)。
 - 音乐: 网页里的 Python 放不了声音, 所以只告诉网页现在该放哪几首 (网页用 music 文件夹里的 .wav 文件放)。
+- 主菜单的小动画: 等玩家输入时 Python 停着动不了, 所以把一整圈画面交给网页, 网页自己一帧一帧地换, 玩家一回答就停。
 """
 
 import json
 import os
+import sys
 import time
 
 import js   # 网页那边 (worker.js) 给 Python 用的东西
@@ -51,10 +53,18 @@ def start_playing(playlist):
     js.musicToPage(json.dumps(playlist))
 
 
+def show_title_loop(frames, height):
+    """主菜单的动画: 画面刚印完, 光标在画面下面一行。把一圈画面交给网页, 网页往上数 height 行就是画面的第一行"""
+    sys.stdout.flush()   # 先让网页收到画面, 再收到动画
+    js.loopToPage(json.dumps({"frames": ["\n".join(frame) for frame in frames], "height": height,
+                              "delay": game_file.TITLE_ANIMATION_DELAY}))
+
+
 game_file.save_game = save_game
 game_file.delete_save = delete_save
 game_file.save_high_scores = save_high_scores
 game_file.start_playing = start_playing
+game_file.show_title_loop = show_title_loop
 time.sleep = lambda seconds: js.sleepMs(int(seconds * 1000))
 
 try:

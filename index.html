@@ -133,7 +133,10 @@
   let unfinished = "";   // 一个控制字符可能被切成两段送过来, 先留着等下一段
   let drawScheduled = false;
 
-  function write(text) {
+  let follow = false;   // 画面要不要滚到最下面 (有新的字印出来就要; 主菜单的动画换帧不用)
+
+  function write(text, scrollDown = true) {
+    if (scrollDown) follow = true;
     text = unfinished + text;
     unfinished = "";
     for (let i = 0; i < text.length; i++) {
@@ -182,6 +185,7 @@
       lines.splice(0, extra);
       looks.splice(0, extra);
       row = Math.max(0, row - extra);
+      loopTop -= extra;   // 主菜单的动画画在哪几行, 也跟着往上挪
     }
     if (!drawScheduled) {
       drawScheduled = true;
@@ -222,7 +226,34 @@
       }
     }
     screenBox.innerHTML = parts.join("");
-    screenBox.scrollTop = screenBox.scrollHeight;
+    if (follow) screenBox.scrollTop = screenBox.scrollHeight;
+    follow = false;
+  }
+
+  // ---------- 主菜单的小动画 ----------
+  // 等玩家输入的时候, 游戏 (Python) 停着动不了, 所以游戏先把一整圈画面交给这里, 这里在原来的地方一帧一帧地换,
+  // 玩家一回答就停 (见 run_in_browser.py 的 show_title_loop)
+  let loopTimer = null;
+  let loopTop = 0;   // 画面的第一行在屏幕的第几行
+
+  function startLoop(text) {
+    stopLoop();
+    const { frames, height, delay } = JSON.parse(text);
+    loopTop = row - height;   // 游戏刚印完画面, 光标在画面下面一行
+    let frame = 0;
+    loopTimer = setInterval(() => {
+      if (loopTop < 0) return stopLoop();   // 画面已经被挤出去了
+      frame = (frame + 1) % frames.length;
+      const saved = [row, col, look];
+      [row, col, look] = [loopTop, 0, ""];
+      write(frames[frame], false);
+      [row, col, look] = saved;
+    }, delay * 1000);
+  }
+
+  function stopLoop() {
+    clearInterval(loopTimer);
+    loopTimer = null;
   }
 
   // ---------- 字号: 跟着屏幕大小变 ----------
@@ -354,6 +385,7 @@
   document.getElementById("bar").addEventListener("submit", (event) => {
     event.preventDefault();
     if (!waiting) return;
+    stopLoop();
     const text = answer.value;
     answer.value = "";
     write(text + "\n");   // 像终端一样, 把输入的字显示在问题后面
@@ -418,6 +450,7 @@
       else if (message.type === "save") writeStored(SAVE_KEY, message.text);
       else if (message.type === "scores") writeStored(SCORES_KEY, message.text);
       else if (message.type === "music") playMusic(JSON.parse(message.text));
+      else if (message.type === "loop") startLoop(message.text);
       else if (message.type === "status") answer.placeholder = message.text || "等游戏开始……";
       else if (message.type === "finished") {
         write("\n—— 游戏已经关掉了。刷新网页可以重新开始。——\n");

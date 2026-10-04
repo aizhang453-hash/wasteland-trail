@@ -8,6 +8,7 @@ import atexit
 import json
 import os
 import random
+import select
 import shutil
 import subprocess
 import sys
@@ -38,7 +39,7 @@ HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "high
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v2.5"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v2.6"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -316,6 +317,7 @@ ANIMATION = True          # 不想看就改成 False
 ANIMATION_FRAMES = 24     # 一共几帧
 ANIMATION_DELAY = 0.06    # 每帧停几秒 (24 帧大约 1.5 秒)
 PICTURE_DELAY = 0.03      # 地标、据点这些画一行一行地画出来, 每行停几秒
+TITLE_ANIMATION_DELAY = 0.12   # 主菜单的小动画 (车一直往前开、蘑菇云翻滚) 每帧停几秒
 
 # 音乐: 用代码做的老式游戏机音乐, 放在 music 文件夹里 (做音乐的程序是 music/make_music.py, 想改曲子就改它)。
 # 只在真正的终端里和网页版里放 (跑测试时不放)。网页版上还有一个「♪」按钮可以关掉
@@ -403,23 +405,39 @@ def read_keys():
     return data.decode("utf-8", errors="ignore")
 
 
-def ask_number(prompt, low, high):
+def key_ready(seconds):
+    """最多等 seconds 秒, 看玩家有没有按键 (在终端里一个键一个键读的时候用)"""
+    if msvcrt:
+        end = time.time() + seconds
+        while time.time() < end:
+            if msvcrt.kbhit():
+                return True
+            time.sleep(0.01)
+        return msvcrt.kbhit()
+    return bool(select.select([sys.stdin], [], [], seconds)[0])
+
+
+def ask_number(prompt, low, high, idle=None):
     """让玩家输入 low 到 high 之间的数字。
     只有数字键、退格键和回车有用, 按空格、字母这些键什么都不会发生;
-    回车也只在输入的数字在范围里时才算数"""
+    回车也只在输入的数字在范围里时才算数。
+    idle: 在终端里等按键的时候, 每隔 TITLE_ANIMATION_DELAY 秒做一次的事 (主菜单用它播动画)"""
     if not can_read_keys():
         return ask_number_by_line(prompt, low, high)
     print(prompt, end="", flush=True)
     old_settings = start_reading_keys()
     try:
-        return read_number(low, high)
+        return read_number(low, high, idle)
     finally:
         stop_reading_keys(old_settings)   # 不管怎么结束 (包括按 Ctrl+C), 都要把终端还原
 
 
-def read_number(low, high):
+def read_number(low, high, idle=None):
     text = ""
     while True:
+        if idle and not key_ready(TITLE_ANIMATION_DELAY):   # 一会儿都没按键, 就先做别的事
+            idle()
+            continue
         for key in read_keys():
             if key == "\x03":                       # Ctrl+C
                 raise KeyboardInterrupt
@@ -2863,31 +2881,105 @@ def show_picture(art, color=None, words=None):
 
 # ========== 开始界面 ==========
 
-# 开始画面: 远处的蘑菇云和废墟, 路上一辆车
-TITLE_ART = r"""
-                        _.-~~~~~~~-._
-                    .-~~   .-~~~-.   ~~-.
-                   (     (         )     )
-                    `-._  `~~---~~'  _.-'
-                        `~~--. .--~~'
-                             | |
-                             | |
-       __        ___         | |          __     _
-      |  |___   |   |   _    | |    ____ |  |___| |
-   ___|  |   |__|   |__| |___|_|___|    ||  |   | |___
-  ____________________________________________________
-        ____
-    ___/_[]_\____
-   |o            o|>
- ==(@)==========(@)===================================
-"""
+# 开始画面: 远处的蘑菇云和废墟, 路上一辆车。在主菜单等玩家选的时候, 它是一段一直循环的小动画:
+# 车停在原地往右开, 路面和废墟往左退 (近处的快, 远处的慢); 蘑菇云离得远, 不跟着动, 云顶慢慢翻滚, 柱子里的烟尘往上冒。
+# 每一层退的速度都配好了, 转一圈 TITLE_FRAMES 帧正好接上第一帧, 所以能无限循环
+TITLE_FRAMES = 112
+TITLE_HEIGHT = 14   # 开始画面加上标题和菜单一共 24 行, Mac 自带的终端默认就是 24 行高, 刚好放得下, 能播动画
+TITLE_CLOUDS = [   # 云顶翻滚的几个样子, 轮流换 (第 4 个跟第 2 个一样, 来回翻)
+    ["                        _.-~~~~~~~-._",
+     "                    .-~~   .-~~~-.   ~~-.",
+     "                   (     (         )     )",
+     "                    `-._  `~~---~~'  _.-'",
+     "                        `~~--. .--~~'"],
+    ["                        _.-~~~~~~~-._",
+     "                    .-~~    .-~~~-.  ~~-.",
+     "                   (      (    ~    )    )",
+     "                    `-._   `~~---~~' _.-'",
+     "                        `~~--. .--~~'"],
+    ["                       _.-~~~~~~~~~-._",
+     "                    .-~~  .-~~~~~-.   ~-.",
+     "                   (    (     ~~    )     )",
+     "                    `-._ `~~-----~~'  _.-'",
+     "                        `~~--. .--~~'"],
+]
+TITLE_CLOUD_ORDER = [0, 1, 2, 1]   # 每 7 帧换一个样子
+TITLE_SMOKE = ["'", " ", ".", " "]  # 柱子里往上冒的烟尘
+TITLE_RUINS = [   # 远处的废墟, 一长条 56 格, 会循环
+    "       __        ___                     __     _      ",
+    "      |  |___   |   |   _          ____ |  |___| |     ",
+    "   ___|  |   |__|   |__| |_________|    ||  |   | |___ ",
+]
+TITLE_CAR = [
+    "        ____",
+    "    ___/_[]_\\____",
+    "   |o            o|>",
+]
+TITLE_ROAD = "=  ==  =   =  ==   =  =   = "    # 路面, 28 格, 不规则 (见 SCENE_ROAD 的说明)
+TITLE_PEBBLES = "  .        ,      .     '    "  # 路边的小石子, 跟路面一样快
+TITLE_WHEELS = ["(|)", "(/)", "(-)", "(\\)"]       # 转动的轮子
+TITLE_DUST = [".o ", " o.", "o .", ". o"]          # 车尾扬起的尘土
+
+
+def title_frame(frame):
+    """主菜单动画的第 frame 帧 (TITLE_HEIGHT 行)"""
+    frame %= TITLE_FRAMES
+    canvas = [[[" ", None] for _ in range(SCENE_WIDTH)] for _ in range(TITLE_HEIGHT)]
+    wing = "v" if frame // 4 % 2 == 0 else "-"           # 天上的秃鹫扇翅膀
+    draw(canvas, 0, 7, wing, "灰")
+    draw(canvas, 1, 50, wing, "灰")
+    cloud = TITLE_CLOUDS[TITLE_CLOUD_ORDER[frame // 7 % len(TITLE_CLOUD_ORDER)]]
+    for y, line in enumerate(cloud):
+        draw(canvas, y, 0, line, "灰")
+    for y in range(5, 9):                                  # 蘑菇云的柱子, 烟尘一帧一帧往上冒
+        smoke = TITLE_SMOKE[(y + frame // 2) % len(TITLE_SMOKE)]
+        draw(canvas, y, 29, "|" + smoke + "|", "灰", solid=True)
+    for y, line in enumerate(TITLE_RUINS):                 # 废墟在柱子前面, 两帧退一格
+        draw(canvas, 6 + y, 0, scene_slice(line, frame // 2)[:56], "灰")
+    draw(canvas, 9, 2, "_" * 52, "灰")                     # 地平线
+    draw(canvas, 12, 0, scene_slice(TITLE_PEBBLES, frame * 2)[:56], "灰")
+    draw(canvas, 13, 1, scene_slice(TITLE_ROAD, frame * 2)[:55], "灰")   # 路面一帧退两格
+    for y, line in enumerate(TITLE_CAR):
+        draw(canvas, 10 + y, 0, line, "灰", solid=True)
+    wheel = TITLE_WHEELS[frame % len(TITLE_WHEELS)]
+    draw(canvas, 13, 3, wheel, "灰", solid=True)
+    draw(canvas, 13, 16, wheel, "灰", solid=True)
+    draw(canvas, 12, 0, TITLE_DUST[frame % len(TITLE_DUST)], "灰")
+    return canvas_lines(canvas)
 
 
 def title_screen():
-    print(colored(TITLE_ART, "灰"))
+    """开始画面。返回从画面的第一行到这里一共印了几行 (主菜单的动画要知道往上数几行)"""
+    print()
+    for row in title_frame(0):
+        print(row)
+    if can_animate():
+        show_title_loop([title_frame(frame) for frame in range(TITLE_FRAMES)], TITLE_HEIGHT)
+    print()
     print(colored("                     废  土  之  旅", "绿", bold=True))
-    print("              W A S T E L A N D   T R A I L")
-    print(f"                          {VERSION}")
+    print(f"              W A S T E L A N D   T R A I L   {VERSION}")
+    return TITLE_HEIGHT + 3
+
+
+def show_title_loop(frames, height):
+    """把一圈动画交给能自己播的地方 (网页版用, 见 run_in_browser.py)。终端里不用它, 终端是等按键时一帧一帧地画 (title_animation)"""
+
+
+def title_animation(lines_up):
+    """主菜单等按键时, 每次调用就把开始画面换成下一帧。lines_up 是从现在光标所在的行往上数几行是画面的第一行。
+    终端太小 (画面放不下) 或者不能播动画时返回 None, 画面就不动"""
+    size = shutil.get_terminal_size((0, 0))
+    if not can_animate() or IN_BROWSER or size.lines <= lines_up or size.columns <= SCENE_WIDTH:
+        return None
+    frames = [title_frame(frame) for frame in range(TITLE_FRAMES)]
+    counter = [0]
+
+    def next_frame():
+        counter[0] = (counter[0] + 1) % TITLE_FRAMES
+        # 记住光标的位置 (\x1b7), 藏起光标, 往上移到画面的第一行, 一行一行盖掉, 再回到原来的位置 (\x1b8), 显示光标
+        print("\x1b7\x1b[?25l" + f"\x1b[{lines_up}A\r" + "\n".join(frames[counter[0]]) + "\x1b8\x1b[?25h",
+              end="", flush=True)
+    return next_frame
 
 
 def show_help():
@@ -2942,15 +3034,16 @@ def main():
     enable_ansi()   # 颜色和动画都要用控制字符, Windows 的终端要先打开这个开关
     while True:
         play_music("主菜单")
-        title_screen()
+        height = title_screen()
         saved = load_game()
         if saved:
             note = (f"{DIFFICULTIES[saved['difficulty']][0]}, {date_text(saved)}, "
                     f"已走 {show_distance(saved, saved['distance'])}")
         else:
             note = "没有存档"
-        print(f"\n1. 开始新游戏\n2. 继续游戏 ({note})\n3. 游戏说明\n4. 最高分\n5. 退出游戏")
-        choice = ask_number("选哪一项? ", 1, 5)
+        menu = f"\n1. 开始新游戏\n2. 继续游戏 ({note})\n3. 游戏说明\n4. 最高分\n5. 退出游戏"
+        print(menu)
+        choice = ask_number("选哪一项? ", 1, 5, idle=title_animation(height + menu.count("\n") + 1))
         if choice == 1:
             if saved:
                 print("\n已经有一个存档了, 开始新游戏会把它删掉。")

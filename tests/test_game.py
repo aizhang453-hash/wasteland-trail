@@ -1921,6 +1921,68 @@ class GameTest(unittest.TestCase):
             sick[difficulty] = len(game["sick"])
         self.assertEqual(sick, {1: 0, 2: 0, 3: 4})
 
+    # ---------- 主菜单的小动画 ----------
+
+    def test_title_frames(self):
+        """主菜单动画: 每帧一样高、不超过画面宽、只用英文字符; 车和蘑菇云一直在; 转一圈正好接上第一帧, 能无限循环"""
+        frames = [w.title_frame(frame) for frame in range(w.TITLE_FRAMES)]
+        for rows in frames:
+            self.assertEqual(len(rows), w.TITLE_HEIGHT)
+            self.assertTrue(all(row.isascii() and len(row) <= w.SCENE_WIDTH for row in rows))
+            self.assertIn("|o            o|>", "\n".join(rows))
+            self.assertIn("_.-~~~", rows[0])
+        self.assertEqual(w.title_frame(0), w.title_frame(w.TITLE_FRAMES))
+        self.assertTrue(all(frames[i] != frames[i + 1] for i in range(w.TITLE_FRAMES - 1)))   # 每一帧都在动
+
+    def test_title_animation_knows_where_the_picture_is(self):
+        """主菜单动画要往上数几行才是画面的第一行: 数错了就会画到别的地方去"""
+        screen = io.StringIO()
+        with redirect_stdout(screen):
+            height = w.title_screen()
+            menu = "\n1. 开始新游戏\n2. 继续游戏 (没有存档)\n3. 游戏说明\n4. 最高分\n5. 退出游戏"
+            print(menu)
+            print("选哪一项? ", end="")
+        lines = screen.getvalue().split("\n")
+        top = lines.index(w.title_frame(0)[0])
+        self.assertEqual(len(lines) - 1 - top, height + menu.count("\n") + 1)
+
+    def test_title_animation_in_terminal(self):
+        """终端里: 记住光标、往上移到画面第一行、换成下一帧、再回到原来的位置; 终端太小或者不能播动画就不播"""
+        with mock.patch.object(w, "can_animate", lambda: True), \
+                mock.patch.object(w.shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((100, 40))):
+            next_frame = w.title_animation(25)
+            screen = io.StringIO()
+            with redirect_stdout(screen):
+                next_frame()
+                next_frame()
+        text = screen.getvalue()
+        self.assertTrue(text.startswith("\x1b7\x1b[?25l\x1b[25A\r"))
+        self.assertTrue(text.endswith("\x1b8\x1b[?25h"))
+        self.assertIn(w.title_frame(2)[-1], text)
+        with mock.patch.object(w, "can_animate", lambda: True), \
+                mock.patch.object(w.shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((100, 24))):
+            self.assertIsNone(w.title_animation(25))   # 终端只有 24 行, 画面放不下
+        self.assertIsNone(w.title_animation(25))       # 跑测试时不是真正的终端
+
+    def test_ask_number_animates_while_waiting(self):
+        """在终端里等按键的时候, 一会儿没按就播一帧动画; 按了数字照常读"""
+        keys = iter(["3", "\r"])
+        waits = iter([False, False, True, True])
+        frames = []
+        with mock.patch.object(w, "can_read_keys", lambda: True), self.fake_keyboard(keys), \
+                mock.patch.object(w, "key_ready", lambda seconds: next(waits)), redirect_stdout(io.StringIO()):
+            self.assertEqual(w.ask_number("选哪一项? ", 1, 5, idle=lambda: frames.append(1)), 3)
+        self.assertEqual(len(frames), 2)
+
+    def test_title_loop_goes_to_the_web_page(self):
+        """网页版: 开始画面印完以后, 把一整圈动画交给网页去播"""
+        calls = []
+        with mock.patch.object(w, "can_animate", lambda: True), \
+                mock.patch.object(w, "show_title_loop", lambda frames, height: calls.append((len(frames), height))), \
+                redirect_stdout(io.StringIO()):
+            w.title_screen()
+        self.assertEqual(calls, [(w.TITLE_FRAMES, w.TITLE_HEIGHT)])
+
     # ---------- 开始界面和主菜单 ----------
 
     def run_main(self, answers):
