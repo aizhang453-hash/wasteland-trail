@@ -42,7 +42,7 @@ SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settin
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v3.5"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v4.0"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -80,6 +80,19 @@ OUTPOSTS = {
                      "要么走绕过胡德山的巴洛路。"),
 }
 OUTPOST_NAMES = [name for name, _ in OUTPOSTS.values()]   # 据点的名字 (从上面算出来的, 不用改)
+# 背景故事: 从这个据点往西, 一直到俄勒冈城, 都是美国政府的地盘 (以政府战时躲进去的夏延山为界)。
+# 这些据点是政府重新占领的基地, 驻着政府的人; 往东的据点还是幸存者自己围起来的堡垒
+GOVERNMENT_FROM = "拉勒米堡"
+GOVERNMENT_BASES = OUTPOST_NAMES[OUTPOST_NAMES.index(GOVERNMENT_FROM):]   # 政府的基地 (从上面算出来的, 不用改)
+GOVERNMENT_KM = next(km for km, (name, _) in OUTPOSTS.items() if name == GOVERNMENT_FROM)   # 政府的地盘从几公里开始
+# 每个政府基地都不一样 (画在 PICTURES 里): 到了的时候说一句
+BASE_NOTES = {
+    "拉勒米堡": "政府地盘的第一道检查站。路口拉着铁丝网, 进出的车都要停下来让士兵看一看。",
+    "布里杰堡": "这里是政府车队的修车场, 院子里停满了卡车, 修车、加油都在这里。",
+    "霍尔堡": "基地里竖着高高的无线电塔, 空地上停着一架直升机。废土上能飞的东西, 只有政府有。",
+    "博伊西堡": "基地守着蛇河边的抽水站, 把河水抽上来一遍遍地过滤, 供给政府的人。",
+    "达尔斯": "哥伦比亚河边的码头, 政府的巡逻船在河上来来回回。",
+}
 
 # 路上的风景地标(只看不买): 离起点几公里 -> (名字, 介绍)
 LANDMARKS = {
@@ -179,6 +192,32 @@ TRADERS = ["一个推着生锈购物车的老太太", "一个骑着破摩托车�
 OUTPOST_TALKERS = ["一个在据点门口晒太阳的老人", "据点里修车的师傅", "一个刚从西边回来的拾荒者",
                    "据点里摆地摊的小贩", "守在墙头上的哨兵"]
 ROAD_TALKERS = ["在这里歇脚的一个旅人", "一个往东走的拾荒者", "一个赶着几头瘦牛的农夫", "在这里扎营的一家人"]
+# 出发的独立城是拾荒者聚居的地方; 拉勒米堡往西的据点是政府的基地
+START_TALKERS = ["独立城集市上摆摊的拾荒者", "一个刚从西边回来的拾荒者", "在独立城歇脚的一个旅人"]
+BASE_TALKERS = ["基地门口站岗的士兵", "基地里修车的师傅", "一个刚从西边回来的拾荒者",
+                "基地里摆地摊的小贩", "一个在基地门口晒太阳的老人"]
+# 跟故事有关的话 (每个地方的人会说其中两句): 出发的独立城 / 政府地盘以东 / 政府的地盘里。
+# 主角不知道俄勒冈城是政府的后备据点, 所以谁都不说破这一点
+STORY_TALK = {
+    "独立城": [
+        "往俄勒冈去? 那边有官方的人在收人, 这话我也听过。要我说, 多半是骗人的。",
+        "二十年前那一天, 天上全是核弹的白烟。等我从地底下爬出来, 城已经没了。",
+        "往西头一段路沿着普拉特河走。河边那条老铁路, 现在归铁道组织管。",
+        "能开的车可不好找。你那辆车没怎么坏, 算你走运。",
+    ],
+    "东边": [
+        "这一带沿着铁路的地方, 都归铁道组织管。废土上还能跑的火车, 都在他们手里。",
+        "再往西走到拉勒米堡, 就是政府的地盘了。那边的据点, 都有政府的人守着。",
+        "政府? 听说他们打仗以前就躲进了山里的基地, 一根汗毛都没伤着。",
+        "车能开的人没几个, 走远路的, 大多是搭铁道组织的火车。",
+    ],
+    "政府": [
+        "政府的人手少得很, 能干活的, 他们都欢迎。往西走的人, 多半是去找活干的。",
+        "政府也想把东边的地方收回来, 可人太少, 又没有那么多吃的、用的, 打不过去。",
+        "辐射偏高的那几段路, 就算在政府的地盘里, 也没人管。要过只能自己硬闯。",
+        "这一路上的据点, 以前都是幸存者的, 后来政府的人来了, 就成了他们的基地。",
+    ],
+}
 # 过来人的提醒 (每个地方的人会说其中两句)
 TALK_TIPS = [
     "下过雨雪, 河水会涨; 在河边等几天, 水也许就退下去了。",
@@ -1116,11 +1155,8 @@ def setup(game):
     game["unit"] = settings["unit"]
     name, money, *_ = DIFFICULTIES[game["difficulty"]]
     print(colored(f"\n难度: {name} (一开始有 {money} 块钱)。想换难度或者距离单位, 回到主菜单的「设置」里改。", "灰"))
-    print("\n核战争已经过去二十年了。")
-    print("你被赶出了密苏里州独立城地下的避难所。")
-    print(f"你要一个人开车, 沿着当年拓荒者走过的俄勒冈小道, "
-          f"去 {show_distance(game, TOTAL_DISTANCE)}外的{DESTINATION}。")
-    print("路上的据点里也许能遇到愿意跟你走的人。\n")
+    show_opening(game)
+    new_screen()   # 看完开场, 换个画面起名字
     leader = input("你叫什么名字? (直接按回车就叫\"队长\") ").strip() or "队长"
     gender = ask_number("你的性别: 1. 男  2. 女  ", 1, 2)
     game["gender"] = "男" if gender == 1 else "女"
@@ -1130,17 +1166,33 @@ def setup(game):
     game["start_month"] = ask_number(f"出发月份 ({FIRST_MONTH}~{LAST_MONTH} 月): ", FIRST_MONTH, LAST_MONTH)
     game["leader"] = leader
     game["party"][leader] = 100
-    write_diary(game, f"{leader}被赶出了独立城地下的避难所, 一个人踏上了俄勒冈小道。")
+    write_diary(game, f"{leader}被赶出了独立城地下的避难所, 开着捡来的车, 一个人踏上了俄勒冈小道。")
     roll_weather(game)   # 出发这天的天气
 
     new_screen()   # 先看出发前的提示, 按回车再进商店 (像原版那样)
-    print("\n出发前可以在营地买东西。")
+    print("\n出发前可以在独立城的集市上买东西。")
     print("提示: 每人每天要吃食物、喝 1 份水, 车每天要用燃料。子弹可以打猎, 也可以防身。"
           "天冷时每人要有一套冬衣。")
     print("      路上会生病受伤, 药品能治好; 辐射会在身体里越积越多, 只有排辐剂能把它排掉。")
     print("      路上要过好几条大河, 有的河边有渡船, 坐渡船要花钱, 别把钱一下子全花光。")
     print("      有几段路靠近核设施, 辐射偏高, 排辐剂要多备一些。")
     shop(game)
+
+
+def show_opening(game):
+    """开新游戏时的开场: 背景故事 (用户 2026-10-05 定的)。玩家可以选男女, 所以只用「你」, 不写他或她"""
+    print("\n2030 年, 第三次世界大战打成了一场核战争。")
+    print("核弹在一天之内落遍了全世界, 旧世界就这样毁灭了。")
+    print("\n二十年过去了。")
+    print("\n你在密苏里州独立城地下的避难所里出生, 从来没见过外面的世界。")
+    print("十八岁那年, 避难所里出了一桩命案。真凶是所长的儿子,")
+    print("他带着人把罪名栽到了你头上。你被赶出避难所, 扔到废土上自生自灭。")
+    print("\n你在独立城靠拾荒活了下来。如今的独立城, 是拾荒者聚居的地方。")
+    print("有人说, 俄勒冈那边有官方的人, 正在收人, 缺干活的人手。")
+    print("很多人不信。你想去试一试。")
+    print("\n你捡到了一辆车, 居然没怎么坏, 还能开。")
+    print(f"你要开着它, 沿着课本里讲过的俄勒冈小道, 去 {show_distance(game, TOTAL_DISTANCE)}外的{DESTINATION}。")
+    print("路上的据点里, 也许能遇到愿意跟你走的人。")
 
 
 def choose_difficulty():
@@ -2426,15 +2478,28 @@ def talk(game):
         print("\n四下里一个人影都没有。到了地标、据点这些地方, 再找人问问吧。")
         return
     outpost = place in OUTPOST_NAMES
-    talkers = OUTPOST_TALKERS if outpost else ROAD_TALKERS
+    if place == START_PLACE:
+        talkers = START_TALKERS
+    elif place in GOVERNMENT_BASES:
+        talkers = BASE_TALKERS
+    else:
+        talkers = OUTPOST_TALKERS if outpost else ROAD_TALKERS
     tips = random.Random(place).sample(TALK_TIPS, 2)   # 每个地方的人说的提醒不一样, 可同一个地方每次问都一样
-    lines = [line for line in (topic(game) for topic in TALK_TOPICS) if line] + tips
+    story = random.Random(place + "故事").sample(STORY_TALK[story_region(game)], 2)
+    lines = story[:1] + [line for line in (topic(game) for topic in TALK_TOPICS) if line] + story[1:] + tips
     heard = game["talk"][1] if game["talk"][0] == place else 0   # 在这里已经听了几次
     game["talk"] = [place, heard + 1]
     print(f"\n{talkers[heard % len(talkers)]}说:")
     print(f"「{lines[heard % len(lines)]}」")
     if heard + 1 == len(lines):
         print(colored(f"(这里的人知道的, 都跟{you(game)}说过了)", "灰"))
+
+
+def story_region(game):
+    """和人说话时, 这里的人说哪一类跟故事有关的话: 独立城 / 政府地盘以东 / 政府的地盘里"""
+    if game["here"] == START_PLACE:
+        return "独立城"
+    return "政府" if game["distance"] >= GOVERNMENT_KM else "东边"
 
 
 def talk_river(game):
@@ -2661,9 +2726,17 @@ def check_places(game):
             continue
         play_music("据点")
         print(f"\n{you(game)}到了{title(name, '青')}{intro}")
-        write_diary(game, f"到了{name}。", km)
+        if name == GOVERNMENT_FROM:
+            print(colored("从这里往西, 一直到俄勒冈城, 都是美国政府的地盘。", "黄"))
+        if name in GOVERNMENT_BASES:
+            print(colored("这里现在是美国政府重新占领的基地, 驻着政府的人。", "黄"))
+            print(BASE_NOTES[name])
+            write_diary(game, f"到了{name}, 这里现在是美国政府的基地。", km)
+        else:
+            write_diary(game, f"到了{name}。", km)
         offer_recruit(game, name, km)
-        if ask_number("这里有幸存者在做买卖, 要进去买卖东西吗? 1. 要  2. 不要  ", 1, 2) == 1:
+        traders = "基地里也有人" if name in GOVERNMENT_BASES else "这里有幸存者"
+        if ask_number(f"{traders}在做买卖, 要进去买卖东西吗? 1. 要  2. 不要  ", 1, 2) == 1:
             shop(game, can_sell=True)
         if name == LAST_ROAD_FROM:
             choose_last_road(game, km)
@@ -3289,17 +3362,19 @@ def arrive(game):
     play_music("到达")
     show_picture(CITY_ART, "绿")
     print(f"\n{date_text(game, last_day)}, {you(game)}到达了{DESTINATION}! 一共用了 {last_day} 天。")
-    write_diary(game, f"到达了{DESTINATION}!", day=last_day)
+    write_diary(game, f"到达了{DESTINATION}! 政府收下了{everyone(game)}。", day=last_day)
     print(f"活下来的人: {'、'.join(game['party'])}")
     if game["dead"]:
         print(f"路上失去的人: {'、'.join(game['dead'])}")
     if game["leader"] in game["dead"]:
         print(f"{game['leader']} 没能走到这里, 是同伴们替{game['leader']}走完了这条路。")
+    print(colored("城门口站着政府的士兵。原来, 俄勒冈城是美国政府的后备据点。", "黄"))
+    print(f"那个消息是真的: 政府收下了{you(game)}。从明天起, {you(game)}就要在{DESTINATION}干活了。")
 
     if game["seeds"]:
         ending = "隐藏结局"
         print("\n" + title("隐藏结局: 绿色的希望", "绿"))
-        print("城里的科学家打开种子库, 激动得说不出话。")
+        print("政府的科学家打开种子库, 激动得说不出话。")
         print("第二年春天, 城墙外第一次长出了麦子。废土开始变绿了。")
         show_picture(FIELD_ART, "绿")
     elif not game["dead"] and len(game["party"]) == 1:
@@ -4082,7 +4157,8 @@ ___/                  \________/                   \___
    /^^\/^^^^^^^^V^^^^^^\  /^^^^^^^^\_/^^^^^^\
   /^^^^^^^^^^^^^^^^^^^^^\/^^^^^^^^^^^^^^^^^^^\
 """), "蓝"),
-    # 据点: 幸存者用废铁、旧轮胎和沙袋重新围起来的堡垒和贸易站
+    # 据点: 卡尼堡是幸存者用废铁、旧轮胎和沙袋重新围起来的堡垒和贸易站;
+    # 拉勒米堡往西是美国政府重新占领的基地, 每个都不一样 (说明在 BASE_NOTES): 检查站、修车场、信号站和直升机、抽水站、河港
     "卡尼堡": (picture(r"""
         |>
         |                 _______________
@@ -4094,49 +4170,59 @@ ____|_||_||_||_||_||_||_||_||_||_||_||_||_|____
    (__)(__)(__)(__)(__)(__)(__)(__)(__)(__)
 """), None),
     "拉勒米堡": (picture(r"""
-     ____                                     ____
-    |[][]|___________________________________|[][]|
-    |    |    F O R T   L A R A M I E        |    |
-    |    |             .-------.             |    |
-    |    |             |       |             |    |
- ___|____|_____________|       |_____________|____|___
+                                     |>>>>>>
+    .-----.         ______________   |
+    | (o) |        | FORT LARAMIE |  |
+    |_____|        |  CHECKPOINT  |  |
+     |   |         |ALL CARS STOP!|  |
+     |   |         |______________|  |
+     |   |   ___       ||    ||      |
+     |   |  |___|==============================o
+ -x--|---|--x-|-|-x-----x-----x-----x-----x-----x-
+_____|___|____|_|_________________________________
 """), None),
     "布里杰堡": (picture(r"""
-                     (  )
-                      ()
-          ____________||____________
-         /                          \
-        /        FORT BRIDGER        \
-       |==============================|
-       |  [_]    .------.     [_]     |   _[ ]_
- ______|_________|      |_____________|___|___|___
+       /\           /\      /\                |>>>
+      /  \    /\   /  \    /  \               |
+ ____/____\__/__\_/____\__/____\______________|___
+|          FORT BRIDGER  *  MOTOR POOL            |
+|   ____________     ____________     ______      |
+|  |   ______   |   |   ______   |   | FUEL |     |
+|  |  |______|__|   |  |______|__|   |  ()  |     |
+|  |__(o)___(o)_|   |__(o)___(o)_|   |______|     |
+|_________________________________________________|
 """), None),
     "霍尔堡": (picture(r"""
-     ___                                  ___
-    /___\        F O R T   H A L L       /___\
-    |[ ]|                                |[ ]|
-    |   |^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^|   |
-    |   ||||||||||||||| .---. ||||||||||||   |
- ___|___||||||||||||||| |   | ||||||||||||___|___
+        /\                     ---------+---------
+       /||\        .---.            ____|____
+      / || \      ( (o) )          /  []     \____.
+     /  ||  \      '---'           \_________/
+    /   ||   \       ||              _|_   _|_
+ __/____||____\______||___      ==================
+|  FORT HALL   SIGNAL STN |    |       H          |
+|  [ ]   [ ]   [ ]   [ ]  |    |    HELIPAD       |
+|_________________________|____|__________________|
 """), None),
     "博伊西堡": (picture(r"""
-         ________________________
-        |   F O R T   B O I S E  |
-     ___|________________________|___
-    |  _      _      _      _       |
-    | |_|    |_|    |_|    |_|      |
- ___|_______________________________|_______
-  ~   ~~  ~   ~~~   ~  ~~   ~   ~~  ~  ~~~
- ~~  ~   ~~~  ~   ~~  ~   ~~~  ~   ~~  ~
+      .------.         ___     ___     ___
+     | WATER  |       |   |   |   |   |   |
+      '------'        |___|   |___|   |___|
+        |  |     _______|_______|_______|______
+        |  |    | FORT BOISE   *  WATER WORKS  |
+       /|  |\   |  [ ]   [ ]   [ ]   [ ]   [ ] |
+ _____/_|__|_\__|______________________________|___
+  ~   ~~  ~   ~~~  ~  ~~~ ======PIPE====== ~  ~~~
+ ~~  ~   ~~~  ~   ~~  ~   ~~~  ~   ~~  ~   ~~  ~
 """), None),
     "达尔斯": (picture(r"""
-  |\                                          /|
-  ||\         T H E   D A L L E S            /||
-  |||\     _____    _____                   /|||
-  ||||\___|[] []|__|[] []|_________________/||||
-  |||||    |    |  |    |                   ||||
- ~|||||~~~~~~~~~~~~~~~~~~~~~<=O==O==O==O=>~~||||~
-  ~   ~~  ~   ~~~   ~  ~~   ~   ~~  ~  ~~~   ~
+    _________________                |>>>>
+    |               |                |
+    |               o    ____________|______________
+    |                   | THE DALLES  *  RIVER PORT |
+    |                   |  [ ]   [ ]   [ ]    [ ]   |
+ ___|___________________|___________________________|_
+ ~~~~~~~~~~ ____/[]\____ ~~~~~ <=O==O==O==O=> ~~~~~~~~~
+  ~   ~~    \__________/  ~~   ~   ~~  ~  ~~~   ~  ~
 """), None),
 }
 
@@ -4442,7 +4528,8 @@ def show_help():
     scores = "、".join(f"{name} ×{score / 100:g}" for name, _, _, _, score, _ in DIFFICULTIES.values())
     print(f"""
 ========== 游戏说明 ==========
-你被赶出了密苏里州独立城地下的避难所, 要开车沿着当年拓荒者走过的俄勒冈小道,
+2030 年, 一场核战争毁灭了旧世界。二十年后, 你被人栽赃, 赶出了独立城的避难所。
+听说俄勒冈那边有官方的人在收人, 你开着捡来的车, 沿着当年拓荒者走过的俄勒冈小道,
 去 {TOTAL_DISTANCE} 公里 ({miles} 英里) 外的{DESTINATION}。只要还有人活着走到, 就算成功。
 
 难度在主菜单的「设置」里选 ({difficulties}): 越难, 一开始的钱越少, 路上出事、生病的机会越多。

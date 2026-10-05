@@ -1434,14 +1434,15 @@ class GameTest(unittest.TestCase):
 
         game["here"], game["distance"] = "卡尼堡", 510
         with redirect_stdout(io.StringIO()) as screen:
-            for _ in range(8):
+            for _ in range(10):
                 w.talk(game)
         text = screen.getvalue()
         for words in ["就是北普拉特河", "收 10 块钱", "再往西到了高平原一带", "下一个能买东西的地方是拉勒米堡",
                       "就到导弹发射井一带了", "到了达尔斯", "一个在据点门口晒太阳的老人说", "据点里修车的师傅说"]:
             self.assertIn(words, text)
-        self.assertEqual(text.count("都跟你们说过了"), 1)   # 一共 7 件事, 第 7 次说完提醒一下
-        self.assertEqual(game["talk"], ["卡尼堡", 8])
+        self.assertEqual(sum(line in text for line in w.STORY_TALK["东边"]), 2)   # 跟故事有关的话说两句
+        self.assertEqual(text.count("都跟你们说过了"), 1)   # 一共 9 件事, 第 9 次说完提醒一下
+        self.assertEqual(game["talk"], ["卡尼堡", 10])
 
         game["here"], game["distance"] = "达尔斯", 2861   # 过了达尔斯: 没有据点、没有河, 也不用再说最后一段路
         with redirect_stdout(io.StringIO()) as screen:
@@ -1468,7 +1469,7 @@ class GameTest(unittest.TestCase):
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()) as screen:
             w.play(game)
         self.assertIn("10. 和人说话", screen.getvalue())
-        self.assertIn("在这里歇脚的一个旅人说", screen.getvalue())   # 刚出发, 停在独立城
+        self.assertIn("独立城集市上摆摊的拾荒者说", screen.getvalue())   # 刚出发, 停在独立城
 
     # ---------- 没燃料 ----------
 
@@ -1918,6 +1919,82 @@ class GameTest(unittest.TestCase):
             w.travel(game)
         self.assertEqual(game["distance"], w.TOTAL_DISTANCE)
         self.assertNotIn("【", screen.getvalue())
+
+    # ---------- 背景故事 (v4.0) ----------
+
+    def test_opening_tells_the_story(self):
+        """开新游戏的开场讲背景故事; 玩家可以选男女, 所以说的是「你」, 每行都放得进 80 列的终端"""
+        answers = iter(["小明", "2", "5", "0"])   # 名字、女、5 月出发、不买东西
+        game = w.new_game()
+        with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()) as screen:
+            w.setup(game)
+        text = screen.getvalue()
+        for words in ["2030 年", "二十年过去了", "所长的儿子", "俄勒冈那边有官方的人", "捡到了一辆车", "3119 公里外的俄勒冈城"]:
+            self.assertIn(words, text)
+        with redirect_stdout(io.StringIO()) as opening:
+            w.show_opening(game)
+        for line in opening.getvalue().split("\n"):
+            self.assertLess(w.text_width(line), 80, line)
+        self.assertIn("开着捡来的车", game["diary"][0])
+
+    def test_government_bases(self):
+        """拉勒米堡往西的据点是美国政府重新占领的基地: 到了会说一声、写日记; 卡尼堡还是幸存者的"""
+        self.assertEqual(w.GOVERNMENT_BASES, ["拉勒米堡", "布里杰堡", "霍尔堡", "博伊西堡", "达尔斯"])
+        game = new_test_game()
+        game["distance"] = 510
+        game["visited"] = [name for km, (name, _) in w.LANDMARKS.items() if km < 510]
+        asked = []
+        with mock.patch("builtins.input", lambda p="": asked.append(p) or "2"), redirect_stdout(io.StringIO()) as screen:
+            w.check_places(game)
+        self.assertNotIn("美国政府", screen.getvalue())
+        self.assertIn("这里有幸存者在做买卖", asked[-1])
+        self.assertTrue(game["diary"][-1].endswith(": 到了卡尼堡。"), game["diary"][-1])
+        game["distance"] = 999
+        game["visited"] += [name for km, (name, _) in w.LANDMARKS.items() if km < 999]
+        game["visited"] += [name for start, _, name, *_ in w.HOTSPOTS if start < 999]
+        with mock.patch("builtins.input", lambda p="": asked.append(p) or "2"), redirect_stdout(io.StringIO()) as screen:
+            w.check_places(game)
+        self.assertIn("一直到俄勒冈城, 都是美国政府的地盘", screen.getvalue())
+        self.assertIn("基地里也有人在做买卖, 要进去买卖东西吗", asked[-1])
+        self.assertIn("到了拉勒米堡, 这里现在是美国政府的基地", game["diary"][-1])
+
+    def test_talkers_in_government_bases(self):
+        """和人说话: 在政府的基地里, 说话的是基地里的人, 头一句就是跟故事有关的话 (政府地盘里的那几句)"""
+        game = new_test_game()
+        game["here"], game["distance"] = "布里杰堡", 1633
+        with redirect_stdout(io.StringIO()) as screen:
+            w.talk(game)
+        self.assertIn(w.BASE_TALKERS[0], screen.getvalue())
+        self.assertTrue(any(line in screen.getvalue() for line in w.STORY_TALK["政府"]))
+        game = new_test_game()   # 刚出发, 在独立城
+        with redirect_stdout(io.StringIO()) as screen:
+            w.talk(game)
+        self.assertTrue(any(line in screen.getvalue() for line in w.STORY_TALK["独立城"]))
+
+    def test_story_talk_keeps_the_secret(self):
+        """主角不知道俄勒冈城是政府的后备据点, 路上谁都不说破"""
+        for lines in w.STORY_TALK.values():
+            for line in lines:
+                self.assertNotIn("后备", line)
+                self.assertNotIn(w.DESTINATION, line)
+
+    def test_every_government_base_is_different(self):
+        """5 个政府基地各有各的画和说明, 不是千篇一律"""
+        self.assertEqual(sorted(w.BASE_NOTES), sorted(w.GOVERNMENT_BASES))
+        arts = ["\n".join(w.PICTURES[name][0]) for name in w.GOVERNMENT_BASES]
+        self.assertEqual(len(set(arts)), len(arts))
+        self.assertEqual(len(set(w.BASE_NOTES.values())), len(w.BASE_NOTES))
+        for note in w.BASE_NOTES.values():
+            self.assertLess(w.text_width(note), 80, note)
+
+    def test_arrive_government_takes_you_in(self):
+        """到了俄勒冈城才知道: 那里是美国政府的后备据点, 政府收下了你们"""
+        game = new_test_game()
+        with redirect_stdout(io.StringIO()) as screen:
+            w.arrive(game)
+        self.assertIn("俄勒冈城是美国政府的后备据点", screen.getvalue())
+        self.assertIn("政府收下了你们", screen.getvalue())
+        self.assertIn("政府收下了大家", game["diary"][-1])
 
     # ---------- 得分和最高分 ----------
 
