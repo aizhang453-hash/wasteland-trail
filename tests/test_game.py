@@ -35,7 +35,9 @@ def random_player(rng):
         if count[0] > 3000:
             raise StopGame
         if "选哪一项" in prompt:        # 主菜单: 还没玩过就大多开新游戏, 玩过一局回来就退出
-            return "5" if played[0] else rng.choice(["1", "1", "1", "2", "3", "4"])
+            return "6" if played[0] else rng.choice(["1", "1", "1", "2", "3", "4", "5"])
+        if "改哪一项" in prompt:        # 设置: 改一两样就回主菜单
+            return rng.choice(["0", "0", str(rng.randint(1, 4))])
         if "买多少" in prompt:
             most = int(prompt.split("最多")[1].split(")")[0])
             return str(rng.randint(0, most // 3))
@@ -77,6 +79,11 @@ def real_car():
     return mock.patch.object(w, "CAR_CAPACITY", REAL_CAPACITY)
 
 
+def pictures_on():
+    """假装在真正的终端里: 画都显示出来, 动画也播 (跑测试时本来都没有)"""
+    return mock.patch.multiple(w, can_animate=lambda: True, can_show_pictures=lambda: True)
+
+
 def no_new_diseases():
     """过一天时不让人突然病倒。要算准每个人剩多少健康的测试用它, 不然偶尔有人随机生病, 测试就时好时坏"""
     return mock.patch.multiple(w, catch_diseases=lambda *args: None, DIRTY_WATER_CHANCE=0)
@@ -95,6 +102,12 @@ class GameTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         patcher = mock.patch.object(w, "HIGH_SCORE_FILE", os.path.join(tmp.name, "highscores.json"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(w, "SETTINGS_FILE", os.path.join(tmp.name, "settings.json"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.dict(w.settings, w.DEFAULT_SETTINGS)   # 主菜单「设置」里的东西, 每个测试都从没改过的开始
         patcher.start()
         self.addCleanup(patcher.stop)
         # 测试队伍的物资给得很足 (每样 100 个, 好几吨), 一般的测试就把车当成无限大
@@ -224,7 +237,7 @@ class GameTest(unittest.TestCase):
 
     def test_start_alone(self):
         """开局只有主角一个人"""
-        answers = iter(["2", "1", "小明", "2", "6", "0"])   # 普通难度、公里、名字、女、6 月出发、不买东西
+        answers = iter(["小明", "2", "6", "0"])   # 名字、女、6 月出发、不买东西 (难度和单位用「设置」里的)
         game = w.new_game()
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.setup(game)
@@ -439,7 +452,7 @@ class GameTest(unittest.TestCase):
 
     def test_diary(self):
         """旅行日记会记下出发、经过的地方、谁加入了、谁去世了, 而且带着天数和路程"""
-        answers = iter(["2", "1", "小明", "1", "5", "0"])   # 普通难度、公里、名字、男、5 月出发、不买东西
+        answers = iter(["小明", "1", "5", "0"])   # 名字、男、5 月出发、不买东西
         game = w.new_game()
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.setup(game)
@@ -1636,7 +1649,7 @@ class GameTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             w.save_game(game)
         # 主菜单选继续游戏, 休息一天 (饿死了), 按回车回到主菜单, 退出
-        answers = iter(["2", "2", "1", "", "5"])
+        answers = iter(["2", "2", "1", "", "6"])
         with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()):
             w.main()
         self.assertFalse(os.path.exists(w.SAVE_FILE))
@@ -1989,17 +2002,22 @@ class GameTest(unittest.TestCase):
     # ---------- 难度 ----------
 
     def test_choose_difficulty(self):
-        """开局先选难度, 一开始的钱跟着难度变: 越难钱越少"""
+        """难度在主菜单的「设置」里选; 开新游戏就用设置里的难度, 一开始的钱跟着难度变: 越难钱越少"""
         for choice in [1, 2, 3]:
             with self.subTest(choice=choice):
-                answers = iter([str(choice), "1", "小明", "1", "5", "0"])   # 难度、公里、名字、男、5 月出发、不买东西
-                game = w.new_game()
+                answers = iter(["1", str(choice), "0"])   # 设置: 难度, 选哪个, 回到主菜单
                 screen = io.StringIO()
                 with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(screen):
+                    w.settings_menu()
+                self.assertIn("3. 困难: 一开始有 370 块钱", screen.getvalue())
+                self.assertEqual(w.settings["difficulty"], choice)
+                answers = iter(["小明", "1", "5", "0"])   # 名字、男、5 月出发、不买东西
+                game = w.new_game()
+                with mock.patch("builtins.input", lambda p="": next(answers)), redirect_stdout(io.StringIO()) as screen:
                     w.setup(game)
                 self.assertEqual(game["difficulty"], choice)
                 self.assertEqual(game["money"], w.DIFFICULTIES[choice][1])
-                self.assertIn("3. 困难: 一开始有 370 块钱", screen.getvalue())
+                self.assertIn(f"难度: {w.DIFFICULTIES[choice][0]}", screen.getvalue())
         self.assertGreater(w.DIFFICULTIES[1][1], w.DIFFICULTIES[2][1])
         self.assertGreater(w.DIFFICULTIES[2][1], w.DIFFICULTIES[3][1])
         self.assertEqual(w.DIFFICULTIES[2][1:5], (500, 100, 100, 100))   # 普通就是没有难度选择以前的样子
@@ -2075,7 +2093,7 @@ class GameTest(unittest.TestCase):
             screen = io.StringIO()
             # 只比较字: 网页版里还会画头像这些画面、会清屏换画面, 先关掉
             with redirect_stdout(screen), mock.patch("builtins.input", lambda p="": "1"), \
-                    mock.patch.object(w, "ANIMATION", False), mock.patch.object(w, "SCREENS", False):
+                    mock.patch.object(w, "can_show_pictures", lambda: False), mock.patch.object(w, "SCREENS", False):
                 w.show_status(game)
                 w.show_party(game)
                 w.title_screen()
@@ -2148,6 +2166,10 @@ class GameTest(unittest.TestCase):
         with mock.patch.object(w, "can_read_keys", lambda: True), mock.patch.object(w, "ANIMATION", False), \
                 redirect_stdout(screen):
             w.drive_animation(game)
+        self.assertEqual(screen.getvalue(), "")
+        with mock.patch.object(w, "can_read_keys", lambda: True), mock.patch.dict(w.settings, {"animation": False}), \
+                redirect_stdout(screen):
+            w.drive_animation(game)   # 主菜单的「设置」里关了过场动画
         self.assertEqual(screen.getvalue(), "")
 
     def test_car_shows_people(self):
@@ -2246,7 +2268,7 @@ class GameTest(unittest.TestCase):
         game["sick"] = {"C": ["痢疾", 3]}
         game["rads"] = {"B": 60}
         screen = io.StringIO()
-        with mock.patch.object(w, "can_animate", lambda: True), redirect_stdout(screen):
+        with pictures_on(), redirect_stdout(screen):
             w.show_party(game)
         party = screen.getvalue().split("队伍整体")[0]
         self.assertTrue(all(w.text_width(line) <= w.SCENE_WIDTH for line in party.split("\n")))
@@ -2263,10 +2285,13 @@ class GameTest(unittest.TestCase):
                 w.show_picture(w.TOMBSTONE, "灰", ["", "这里长眠着 A"])
             self.assertIn("R.I.P", screen.getvalue())
             self.assertIn("这里长眠着 A", screen.getvalue())
-            screen = io.StringIO()
-            with mock.patch.object(w, "ANIMATION", False), redirect_stdout(screen):
+            screen = io.StringIO()   # 「设置」里关了过场动画: 画还是有, 只是一下子画出来, 不一行一行地等
+            sleeps = []
+            with mock.patch.dict(w.settings, {"animation": False}), mock.patch.object(w.time, "sleep", sleeps.append), \
+                    redirect_stdout(screen):
                 w.show_picture(w.TOMBSTONE)
-            self.assertEqual(screen.getvalue(), "")
+            self.assertIn("R.I.P", screen.getvalue())
+            self.assertEqual(sleeps, [])
 
     def test_pictures_and_animations_in_the_game(self):
         """开着动画玩: 到了据点有画、过河有动画、有人去世有墓碑、查看队伍有头像, 全军覆没也有画面"""
@@ -2275,7 +2300,7 @@ class GameTest(unittest.TestCase):
         game["distance"] = 515   # 刚过卡尼堡
         game["visited"] = [name for km, (name, _) in w.LANDMARKS.items() if km < 510]
         screen = io.StringIO()
-        with mock.patch.object(w, "can_animate", lambda: True), mock.patch.object(w.time, "sleep", lambda s: None), \
+        with pictures_on(), mock.patch.object(w.time, "sleep", lambda s: None), \
                 mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(screen):
             w.check_places(game)                          # 卡尼堡: 不带人、不买东西
             w.ford_river(game, "大蓝河", 0.1)              # 水很浅, 直接开过去
@@ -2288,7 +2313,7 @@ class GameTest(unittest.TestCase):
         self.assertIn(w.PORTRAITS["陌生人"][2], text)
         game["party"] = {}
         screen = io.StringIO()
-        with mock.patch.object(w, "can_animate", lambda: True), mock.patch.object(w.time, "sleep", lambda s: None), \
+        with pictures_on(), mock.patch.object(w.time, "sleep", lambda s: None), \
                 mock.patch("builtins.input", lambda p="": ""), redirect_stdout(screen):
             w.play(game)
         self.assertIn(w.WIPEOUT_ART[0], screen.getvalue())
@@ -2296,7 +2321,7 @@ class GameTest(unittest.TestCase):
     def test_planner_plays_with_animations(self):
         """开着所有动画和画面玩完几局, 不能报错"""
         from tests.balance import play_one
-        with real_car(), mock.patch.object(w, "can_animate", lambda: True), \
+        with real_car(), pictures_on(), \
                 mock.patch.object(w.time, "sleep", lambda seconds: None):
             for seed in range(20):
                 with self.subTest(seed=seed):
@@ -2356,7 +2381,9 @@ class GameTest(unittest.TestCase):
         with mock.patch.object(w, "start_playing", calls.append):
             w.play_music("主菜单")                      # 跑测试时不是真正的终端
             with mock.patch.object(w, "IN_BROWSER", True), mock.patch.object(w, "MUSIC", False):
-                w.play_music("主菜单")                  # 设置里关掉了
+                w.play_music("主菜单")                  # 游戏设置里整个关掉了
+            with mock.patch.object(w, "IN_BROWSER", True), mock.patch.dict(w.settings, {"music": False}):
+                w.play_music("主菜单")                  # 玩的人在主菜单的「设置」里关了
         self.assertEqual(calls, [])
 
     def test_music_in_the_game(self):
@@ -2385,7 +2412,7 @@ class GameTest(unittest.TestCase):
                                  "taps.wav", "taps.wav", "travel.wav", "game_over.wav"])   # 开始玩 (赶路), 发现全军覆没
         screen = io.StringIO()
         calls.clear()
-        with fake, state, mock.patch("builtins.input", lambda p="": "5"), redirect_stdout(screen):
+        with fake, state, mock.patch("builtins.input", lambda p="": "6"), redirect_stdout(screen):
             w.main()                                     # 主菜单, 直接退出
         self.assertEqual(calls, [[("title.wav", True)], []])
 
@@ -2530,7 +2557,7 @@ class GameTest(unittest.TestCase):
         screen = io.StringIO()
         with redirect_stdout(screen):
             height = w.title_screen()
-            menu = "\n1. 开始新游戏\n2. 继续游戏 (没有存档)\n3. 游戏说明\n4. 最高分\n5. 退出游戏"
+            menu = "\n1. 开始新游戏\n2. 继续游戏 (没有存档)\n3. 游戏说明  4. 最高分  5. 设置  6. 退出游戏"
             print(menu)
             print("选哪一项? ", end="")
         lines = screen.getvalue().split("\n")
@@ -2539,7 +2566,7 @@ class GameTest(unittest.TestCase):
 
     def test_title_animation_in_terminal(self):
         """终端里: 记住光标、往上移到画面第一行、换成下一帧、再回到原来的位置; 终端太小或者不能播动画就不播"""
-        with mock.patch.object(w, "can_animate", lambda: True), \
+        with pictures_on(), \
                 mock.patch.object(w.shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((100, 40))):
             next_frame = w.title_animation(25)
             screen = io.StringIO()
@@ -2550,7 +2577,7 @@ class GameTest(unittest.TestCase):
         self.assertTrue(text.startswith("\x1b7\x1b[?25l\x1b[25A\r"))
         self.assertTrue(text.endswith("\x1b8\x1b[?25h"))
         self.assertIn(w.title_frame(2)[-1], text)
-        with mock.patch.object(w, "can_animate", lambda: True), \
+        with pictures_on(), \
                 mock.patch.object(w.shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((100, 24))):
             self.assertIsNone(w.title_animation(25))   # 终端只有 24 行, 画面放不下
         self.assertIsNone(w.title_animation(25))       # 跑测试时不是真正的终端
@@ -2568,7 +2595,7 @@ class GameTest(unittest.TestCase):
     def test_title_loop_goes_to_the_web_page(self):
         """网页版: 开始画面印完以后, 把一整圈动画交给网页去播"""
         calls = []
-        with mock.patch.object(w, "can_animate", lambda: True), \
+        with pictures_on(), \
                 mock.patch.object(w, "show_title_loop", lambda frames, height: calls.append((len(frames), height))), \
                 redirect_stdout(io.StringIO()):
             w.title_screen()
@@ -2585,23 +2612,64 @@ class GameTest(unittest.TestCase):
         return screen.getvalue()
 
     def test_title_screen_help_and_quit(self):
-        text = self.run_main(["3", "", "4", "", "5"])   # 游戏说明, 按回车回来, 最高分, 按回车回来, 退出
+        text = self.run_main(["3", "", "4", "", "6"])   # 游戏说明, 按回车回来, 最高分, 按回车回来, 退出
         for words in ["废  土  之  旅", "W A S T E L A N D", w.VERSION, "1. 开始新游戏",
-                      "2. 继续游戏 (没有存档)", "游戏说明", "排辐剂", "辐射偏高", "开局先选难度",
+                      "2. 继续游戏 (没有存档)", "游戏说明", "排辐剂", "辐射偏高", "难度在主菜单的「设置」里选",
                       "困难 ×1.5", "4. 最高分", "还没有人走到", "下次再见"]:
             self.assertIn(words, text)
 
+    def test_settings(self):
+        """主菜单的「设置」: 换难度、换成英里、关音乐、关动画, 都记下来; 下次打开游戏 (重新读设置) 还是这样"""
+        text = self.run_main(["5", "1", "1", "2", "2", "3", "4", "0", "6"])   # 设置: 难度→简单, 单位→英里, 音乐, 动画, 回去, 退出
+        for words in ["------ 设置 ------", "1. 难度: 普通", "2. 距离单位: 公里", "3. 音乐: 开", "4. 过场动画: 开",
+                      "1. 难度: 简单", "2. 距离单位: 英里", "3. 音乐: 关", "4. 过场动画: 关"]:
+            self.assertIn(words, text)
+        with open(w.SETTINGS_FILE, encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"difficulty": 1, "unit": "英里", "music": False, "animation": False})
+        w.settings.update(w.DEFAULT_SETTINGS)   # 假装重新打开游戏
+        w.load_settings()
+        self.assertEqual(w.settings, {"difficulty": 1, "unit": "英里", "music": False, "animation": False})
+
+    def test_bad_settings_file(self):
+        """设置文件坏了、哪一项不对, 就用原来的"""
+        for text in ["这不是设置", '["英里"]', '{"difficulty": 9, "unit": "光年", "music": "开", "animation": false}']:
+            with self.subTest(text=text):
+                w.settings.update(w.DEFAULT_SETTINGS)
+                with open(w.SETTINGS_FILE, "w", encoding="utf-8") as f:
+                    f.write(text)
+                w.load_settings()
+                expected = dict(w.DEFAULT_SETTINGS, animation=False) if "animation" in text else w.DEFAULT_SETTINGS
+                self.assertEqual(w.settings, expected)
+
+    def test_unit_setting_applies_to_saved_game(self):
+        """存档时是公里, 在「设置」里换成英里, 接着玩的时候就按英里显示"""
+        game = new_test_game()
+        with redirect_stdout(io.StringIO()):
+            w.save_game(game)
+        w.settings["unit"] = "英里"
+        self.assertEqual(w.load_game()["unit"], "英里")
+
+    def test_settings_in_browser(self):
+        """网页版的设置里没有音乐那一项 (网页右上角有「♪」按钮)"""
+        with mock.patch.object(w, "IN_BROWSER", True), mock.patch.object(w, "SCREENS", False), \
+                mock.patch.object(w, "can_show_pictures", lambda: False), \
+                mock.patch("builtins.input", lambda p="": "0"), redirect_stdout(io.StringIO()) as screen:
+            w.settings_menu()
+        self.assertNotIn("3. 音乐", screen.getvalue())
+        self.assertIn("3. 过场动画", screen.getvalue())
+        self.assertIn("右上角的「♪」", screen.getvalue())
+
     def test_continue_without_save(self):
-        text = self.run_main(["2", "", "5"])
+        text = self.run_main(["2", "", "6"])
         self.assertIn("还没有存档", text)
 
     def test_save_then_back_to_menu_then_continue(self):
         """开新游戏, 存档后回到主菜单, 主菜单上能看到存档, 选继续游戏能接着玩"""
-        new_game = ["1", "3", "1", "小明", "1", "5", "0"]   # 新游戏: 困难、公里、名字、男、5 月、不买东西
-        text = self.run_main(new_game + ["13", "2", "5"])   # 存档, 回到主菜单, 退出
+        new_game = ["5", "1", "3", "0", "1", "小明", "1", "5", "0"]   # 设置里选困难, 回主菜单, 新游戏: 名字、男、5 月、不买东西
+        text = self.run_main(new_game + ["13", "2", "6"])   # 存档, 回到主菜单, 退出
         self.assertTrue(os.path.exists(w.SAVE_FILE))
         self.assertIn("继续游戏 (困难, 5月1日, 已走 0 公里)", text)
-        text = self.run_main(["2", "13", "2", "5"])   # 继续游戏, 马上又存档, 回到主菜单, 退出
+        text = self.run_main(["2", "13", "2", "6"])   # 继续游戏, 马上又存档, 回到主菜单, 退出
         self.assertIn("==== 5月1日 (第 1 天)", text)
 
     def test_new_game_over_old_save_asks_first(self):
@@ -2610,11 +2678,11 @@ class GameTest(unittest.TestCase):
         game["leader"] = "老存档"
         with redirect_stdout(io.StringIO()):
             w.save_game(game)
-        text = self.run_main(["1", "2", "5"])   # 开始新游戏, 不确定, 退出
+        text = self.run_main(["1", "2", "6"])   # 开始新游戏, 不确定, 退出
         self.assertIn("开始新游戏会把它删掉", text)
         self.assertEqual(w.load_game()["leader"], "老存档")
-        new_game = ["1", "1", "2", "1", "小明", "1", "5", "0"]   # 开始新游戏、确定、普通、公里、名字、男、5 月、不买东西
-        self.run_main(new_game + ["13", "2", "5"])
+        new_game = ["1", "1", "小明", "1", "5", "0"]   # 开始新游戏、确定、名字、男、5 月、不买东西
+        self.run_main(new_game + ["13", "2", "6"])
         self.assertEqual(w.load_game()["leader"], "小明")
 
     # ---------- 换画面和一直往前开 ----------
@@ -2980,7 +3048,7 @@ class GameTest(unittest.TestCase):
         """换画面的时候, 查看队伍一页放两个人 (每个人都有头像), 物资另外一页"""
         game = new_test_game()
         prompts = []
-        with self.screens(), mock.patch.object(w, "can_animate", lambda: True), \
+        with self.screens(), pictures_on(), \
                 mock.patch.object(w.time, "sleep", lambda seconds: None), \
                 mock.patch("builtins.input", lambda p="": prompts.append(p) or ""), \
                 redirect_stdout(io.StringIO()) as screen:

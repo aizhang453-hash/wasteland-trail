@@ -30,10 +30,12 @@ except ImportError:   # 浏览器里还留着旧版的 worker.js (它不会放 g
 
 game_file.SAVE_FILE = "/home/pyodide/savegame.json"   # worker.js 会把浏览器里的存档放在这里
 game_file.HIGH_SCORE_FILE = "/home/pyodide/highscores.json"   # 最高分榜也一样
+game_file.SETTINGS_FILE = "/home/pyodide/settings.json"       # 主菜单「设置」里改的也一样
 
 real_save_game = game_file.save_game
 real_delete_save = game_file.delete_save
 real_save_high_scores = game_file.save_high_scores
+real_save_settings = game_file.save_settings
 
 
 def save_game(game):
@@ -56,6 +58,14 @@ def save_high_scores(scores):
     if os.path.exists(game_file.HIGH_SCORE_FILE):
         with open(game_file.HIGH_SCORE_FILE, encoding="utf-8") as f:
             js.saveScoresToPage(f.read())
+
+
+def save_settings():
+    """主菜单「设置」里改了东西, 也交给网页存进浏览器 (浏览器里还是旧版的 worker.js 时存不了, 刷新就忘了)"""
+    real_save_settings()
+    tell = getattr(js, "settingsToPage", None)
+    if tell:
+        tell(json.dumps(game_file.settings, ensure_ascii=False))
 
 
 def start_playing(playlist):
@@ -204,6 +214,7 @@ if gui and getattr(js, "guiToPage", None):   # 浏览器里还留着旧版的 wo
 game_file.save_game = save_game
 game_file.delete_save = delete_save
 game_file.save_high_scores = save_high_scores
+game_file.save_settings = save_settings
 game_file.start_playing = start_playing
 game_file.show_title_loop = show_title_loop
 game_file.stop_pressed = stop_pressed

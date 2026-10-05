@@ -38,10 +38,11 @@ except ImportError:
 # 存档文件和最高分榜, 都放在游戏文件旁边
 SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
 HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "highscores.json")
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")   # 主菜单「设置」里改的
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v3.4.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v3.5"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -59,6 +60,8 @@ DIFFICULTIES = {
     2: ("普通", 500, 100, 100, 100, "钱刚刚够用, 要精打细算"),
     3: ("困难", 370, 140, 140, 150, "钱很紧, 路上出事、生病都多不少"),
 }
+# 主菜单的「设置」(难度、距离单位、音乐、过场动画) 没改过的时候是什么样。改了会存进 SETTINGS_FILE, 下次打开游戏还是那样
+DEFAULT_SETTINGS = {"difficulty": 2, "unit": "公里", "music": True, "animation": True}
 # 在这些难度里, 过河翻车、坐木筏撞上礁石都不会有人被冲走 (第一次玩的人常常在一开始还只有自己一个人的时候,
 # 在头两条河就被冲走了, 一局一下子就结束, 太狠了)
 NO_DROWNING = [1]
@@ -392,7 +395,7 @@ HUNT_WORDS = ["bang", "pow", "boom", "zap"]
 
 # 过场动画和画面: 赶路 (跟着天气变)、过河、坐木筏的动画, 还有地标、据点、墓碑、结局的画和每个人的样子。
 # 只在真正的终端里和网页版里有 (跑测试时没有)
-ANIMATION = True          # 不想看就改成 False
+ANIMATION = True          # 改成 False 就完全不放动画 (玩的人在主菜单的「设置」里也能关)
 ANIMATION_FRAMES = 24     # 一共几帧
 ANIMATION_DELAY = 0.06    # 每帧停几秒 (24 帧大约 1.5 秒)
 PICTURE_DELAY = 0.03      # 地标、据点这些画一行一行地画出来, 每行停几秒
@@ -420,7 +423,7 @@ WARN_WEATHER = ["酸雨", "辐射风暴", "辐射沙尘暴"]   # 一直往前开
 
 # 音乐: 用代码做的老式游戏机音乐, 放在 music 文件夹里 (做音乐的程序是 music/make_music.py, 想改曲子就改它)。
 # 只在真正的终端里和网页版里放 (跑测试时不放)。网页版上还有一个「♪」按钮可以关掉
-MUSIC = True              # 不想听就改成 False
+MUSIC = True              # 改成 False 就完全不放音乐 (玩的人在主菜单的「设置」里也能关)
 MUSIC_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "music")
 # 什么时候放什么: 名字 -> (文件, 怎么放)。
 # 「循环」是背景音乐, 一直放到换成别的; 「一段」放完接着放原来的背景音乐; 「结尾」放完就安静了
@@ -1106,11 +1109,13 @@ def new_game():
 
 
 def setup(game):
+    """开新游戏: 难度和距离单位用主菜单「设置」里的, 再起名字、选性别和出发月份, 最后买东西"""
     new_screen()
-    choose_difficulty(game)
-    unit = ask_number("距离单位: 1. 公里  2. 英里  ", 1, 2)
-    game["unit"] = "公里" if unit == 1 else "英里"
-    new_screen()
+    game["difficulty"] = settings["difficulty"]
+    game["money"] = DIFFICULTIES[game["difficulty"]][1]
+    game["unit"] = settings["unit"]
+    name, money, *_ = DIFFICULTIES[game["difficulty"]]
+    print(colored(f"\n难度: {name} (一开始有 {money} 块钱)。想换难度或者距离单位, 回到主菜单的「设置」里改。", "灰"))
     print("\n核战争已经过去二十年了。")
     print("你被赶出了密苏里州独立城地下的避难所。")
     print(f"你要一个人开车, 沿着当年拓荒者走过的俄勒冈小道, "
@@ -1138,13 +1143,12 @@ def setup(game):
     shop(game)
 
 
-def choose_difficulty(game):
-    """开局选难度: 决定一开始有多少钱、路上出事和生病的机会, 还有得分要乘多少"""
+def choose_difficulty():
+    """「设置」里选难度: 决定一开始有多少钱、路上出事和生病的机会, 还有得分要乘多少。返回难度的编号"""
     print("\n选难度 (越难得分越高):")
     for number, (name, money, _, _, score, note) in DIFFICULTIES.items():
         print(f"{number}. {name}: 一开始有 {money} 块钱, {note}。得分 ×{score / 100:g}")
-    game["difficulty"] = ask_number("选哪个? ", 1, len(DIFFICULTIES))
-    game["money"] = DIFFICULTIES[game["difficulty"]][1]
+    return ask_number("选哪个? ", 1, len(DIFFICULTIES))
 
 
 def price_level(game):
@@ -1315,7 +1319,7 @@ def show_party(game):
     """查看队伍: 每个人的详细情况, 还有物资大概能撑多久。不花时间"""
     print("\n========== 队伍状态 ==========")
     for i, (name, h) in enumerate(game["party"].items()):
-        if i and i % PARTY_PAGE == 0 and can_animate() and can_clear_screen():   # 有头像的话, 一页放不下所有人
+        if i and i % PARTY_PAGE == 0 and can_show_pictures() and can_clear_screen():   # 有头像的话, 一页放不下所有人
             new_screen()
             print("\n========== 队伍状态 (接上页) ==========")
         tags = []
@@ -1341,7 +1345,7 @@ def show_party(game):
                          f"大约还要 {days} 天才好 (躲在车里休养好得快一倍, 用药品马上就好)")
         if name in game["jobs"]:
             notes.append(f"特长: {SKILLS[game['jobs'][name]]}")
-        if can_animate():   # 在终端和网页版里, 每个人的样子画在左边, 字写在右边 (切成短行, 免得自动换行把画挤歪)
+        if can_show_pictures():   # 在终端和网页版里, 每个人的样子画在左边, 字写在右边 (切成短行, 免得自动换行把画挤歪)
             words = [f"{name}{tag}", health, radiation]
             for note in notes:
                 words += wrap_text(note, SCENE_WIDTH - PORTRAIT_WIDTH)
@@ -1352,7 +1356,7 @@ def show_party(game):
             for note in notes:
                 print("    " + note)
     average = sum(game["party"].values()) // len(game["party"])
-    if can_animate():
+    if can_show_pictures():
         print()   # 跟最后一个人的头像隔开
     print(f"队伍整体: {health_word(average)} (平均健康 {average})")
     if game["dead"]:
@@ -3417,6 +3421,72 @@ def save_game(game):
         print("\n存档失败了, 可能是文件夹不能写入。")
 
 
+settings = dict(DEFAULT_SETTINGS)   # 现在的设置 (main() 一开始从 SETTINGS_FILE 读)
+
+
+def load_settings():
+    """读主菜单「设置」里改过的东西。没有设置文件、文件坏了、哪一项不对, 就用原来的"""
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return
+    if not isinstance(saved, dict):
+        return
+    if saved.get("difficulty") in DIFFICULTIES:
+        settings["difficulty"] = saved["difficulty"]
+    if saved.get("unit") in UNITS:
+        settings["unit"] = saved["unit"]
+    for key in ["music", "animation"]:
+        if isinstance(saved.get(key), bool):
+            settings[key] = saved[key]
+
+
+def save_settings():
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f, ensure_ascii=False)
+    except OSError:
+        print("\n设置存不下来 (文件夹不能写入), 这次关掉游戏以后就忘了。")
+
+
+def settings_menu():
+    """主菜单的「设置」: 难度、距离单位、音乐、过场动画。改了马上记下来, 下次打开游戏还是这样。
+    网页版的音乐用网页右上角的「♪」开关, 这里就不放了"""
+    while True:
+        new_screen()
+        name, money, *_ = DIFFICULTIES[settings["difficulty"]]
+        on = {True: "开", False: "关"}
+        items = [("难度", f"难度: {name} (一开始有 {money} 块钱; 以后开新游戏用, 已经开始的那一局不变)"),
+                 ("单位", f"距离单位: {settings['unit']} (重量也跟着变: 公里配公斤, 英里配磅)")]
+        if not IN_BROWSER:
+            items.append(("音乐", f"音乐: {on[settings['music']]}"))
+        items.append(("动画", f"过场动画: {on[settings['animation']]} (关了以后, 赶路、过河这些动画不放, 画一下子画出来)"))
+        print("\n------ 设置 ------")
+        for number, (_, words) in enumerate(items, 1):
+            print(f"{number}. {words}")
+        if IN_BROWSER:
+            print("音乐: 点网页右上角的「♪」开关")
+        print("0. 回到主菜单")
+        choice = ask_number("改哪一项? ", 0, len(items))
+        if choice == 0:
+            return
+        what = items[choice - 1][0]
+        if what == "难度":
+            settings["difficulty"] = choose_difficulty()
+        elif what == "单位":
+            settings["unit"] = "公里" if ask_number("距离单位: 1. 公里  2. 英里  ", 1, 2) == 1 else "英里"
+        elif what == "音乐":
+            settings["music"] = not settings["music"]
+            if settings["music"]:
+                play_music("主菜单")
+            else:
+                stop_music()
+        else:
+            settings["animation"] = not settings["animation"]
+        save_settings()
+
+
 def load_game():
     """读存档。没有存档或者存档坏了, 就返回 None"""
     if not os.path.exists(SAVE_FILE):
@@ -3438,6 +3508,7 @@ def load_game():
             game["visited"].append(name)
     if "here" not in saved:   # 以前的存档不知道车停在哪, 只知道还没出发的话是在起点
         game["here"] = START_PLACE if game["distance"] == 0 else None
+    game["unit"] = settings["unit"]   # 距离单位在主菜单的「设置」里改, 接着玩的存档也跟着变
     return game
 
 
@@ -3457,7 +3528,7 @@ music_lock = threading.Lock()   # 换音乐和开始放一首, 不能同时进�
 
 def can_play_music():
     """能不能放音乐: 设置里没关掉, 而且是在真正的终端里或者网页版里"""
-    return MUSIC and (can_read_keys() or IN_BROWSER)
+    return MUSIC and settings["music"] and (can_read_keys() or IN_BROWSER)
 
 
 def play_music(name):
@@ -3581,9 +3652,14 @@ DASH_EVENT_ROWS = 5
 DASH_ROWS = SCENE_HEIGHT + 1 + DASH_MAP_ROWS + 1 + DASH_EVENT_ROWS   # 方框里面有几行 (右边一栏也是这么多行)
 
 
+def can_show_pictures():
+    """能不能显示画 (地标的画、每个人的样子……): 在真正的终端里或者网页版里 (跑测试时不显示)"""
+    return can_read_keys() or IN_BROWSER
+
+
 def can_animate():
-    """能不能播动画、显示画面: 设置里没关掉, 而且是在真正的终端里或者网页版里"""
-    return ANIMATION and (can_read_keys() or IN_BROWSER)
+    """能不能播动画 (赶路、过河、主菜单的小动画, 画一行一行地画出来): 设置里没关掉, 而且能显示画"""
+    return ANIMATION and settings["animation"] and can_show_pictures()
 
 
 def new_canvas():
@@ -4244,13 +4320,14 @@ def beside(art, words, color=None, width=None):
 
 
 def show_picture(art, color=None, words=None):
-    """显示一幅画, 一行一行地慢慢画出来; words 是写在画右边的字。只在能播动画的时候显示"""
-    if not can_animate():
+    """显示一幅画, 一行一行地慢慢画出来 (设置里关了动画就一下子画出来); words 是写在画右边的字。跑测试时不显示"""
+    if not can_show_pictures():
         return
     print()
     for row in beside(art, words or [], color):
         print(row)
-        time.sleep(PICTURE_DELAY)
+        if can_animate():
+            time.sleep(PICTURE_DELAY)
 
 
 # ========== 开始界面 ==========
@@ -4368,7 +4445,7 @@ def show_help():
 你被赶出了密苏里州独立城地下的避难所, 要开车沿着当年拓荒者走过的俄勒冈小道,
 去 {TOTAL_DISTANCE} 公里 ({miles} 英里) 外的{DESTINATION}。只要还有人活着走到, 就算成功。
 
-开局先选难度 ({difficulties}): 越难, 一开始的钱越少, 路上出事、生病的机会越多。
+难度在主菜单的「设置」里选 ({difficulties}): 越难, 一开始的钱越少, 路上出事、生病的机会越多。
 
 每天可以选一件事做:
   继续前进  开车赶路, 要用燃料。开得越快越费燃料, 人也越累。
@@ -4405,7 +4482,7 @@ def show_help():
 走到{DESTINATION}才算分: 活下来的人越多、越健康分越高, 剩下的物资和钱也能换成分。
 最后再按难度乘一下: {scores}。主菜单的「最高分」里记着前 {HIGH_SCORES} 名。
 
-游戏有音乐。不想听: 网页版点右上角的「♪」; 在电脑上玩, 把游戏文件开头「游戏设置」里的 MUSIC 改成 False。
+主菜单的「设置」里还能换距离单位 (公里或英里)、关掉音乐和过场动画。网页版的音乐用右上角的「♪」开关。
 
 在电脑的终端里玩, 窗口够大的时候 (拉大到 101 列、28 行以上), 每天的菜单和开车的画面
 会变成一个分成几块的大画面: 动画、状态、路线图、最近发生的事都在一起。网页版本来就有这些面板。
@@ -4419,6 +4496,7 @@ def main():
     """主菜单: 开始新游戏、继续游戏、看说明, 或者退出。一局玩完会回到这里"""
     enable_ansi()   # 颜色和动画都要用控制字符, Windows 的终端要先打开这个开关
     screen["unread"] = False   # 刚打开游戏, 屏幕上还没有要看的字
+    load_settings()
     while True:
         new_screen()
         play_music("主菜单")
@@ -4429,9 +4507,10 @@ def main():
                     f"已走 {show_distance(saved, saved['distance'])}")
         else:
             note = "没有存档"
-        menu = f"\n1. 开始新游戏\n2. 继续游戏 ({note})\n3. 游戏说明\n4. 最高分\n5. 退出游戏"
+        # 后面几个短的排成一行: 开始画面在 80x24 的终端里正好放得下, 还能播小动画
+        menu = f"\n1. 开始新游戏\n2. 继续游戏 ({note})\n3. 游戏说明  4. 最高分  5. 设置  6. 退出游戏"
         print(menu)
-        choice = ask_number("选哪一项? ", 1, 5, idle=title_animation(height + menu.count("\n") + 1))
+        choice = ask_number("选哪一项? ", 1, 6, idle=title_animation(height + menu.count("\n") + 1))
         if choice == 1:
             if saved:
                 print("\n已经有一个存档了, 开始新游戏会把它删掉。")
@@ -4454,6 +4533,8 @@ def main():
             new_screen()
             show_high_scores()
             wait_enter("按回车回到主菜单……")
+        elif choice == 5:
+            settings_menu()
         else:
             stop_music()
             print("\n下次再见!")

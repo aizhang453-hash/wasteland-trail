@@ -152,7 +152,8 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(hotspots, [name for _, _, name, *_ in w.HOTSPOTS])
 
     def test_hunt_starts_with_empty_queue(self):
-        """网页: 开始打猎时, 上次打猎快结束时多点的、多按的 (比如多按了一下回车) 都扔掉, 不会让这次一开始就结束"""
+        """网页: 开始打猎时, 上次打猎快结束时多点的、多按的 (比如多按了一下回车) 都扔掉, 不会让这次一开始就结束;
+        「设置」里改的东西交给网页存进浏览器"""
         script = f"""
 import json, sys, types, builtins, runpy, os
 sys.path[:0] = [{ROOT!r}, {os.path.join(ROOT, "web")!r}]
@@ -170,11 +171,17 @@ def no_input(prompt=""):
 builtins.input = no_input
 runner = runpy.run_path({os.path.join(ROOT, "web", "run_in_browser.py")!r}, run_name="game")
 runner["hunt_screen"](True)
-print(json.dumps(runner["hunt_keys"]({{}})))
+saved = []   # 主菜单「设置」里改了东西, 也交给网页存进浏览器
+js.settingsToPage = lambda text: saved.append(json.loads(text))
+runner["game_file"].settings["unit"] = "英里"
+runner["game_file"].save_settings()
+print(json.dumps([runner["hunt_keys"]({{}}), saved]))
 """
         result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, cwd=ROOT, timeout=120)
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
-        self.assertEqual(json.loads(result.stdout.strip().split("\n")[-1]), [])
+        keys, saved = json.loads(result.stdout.strip().split("\n")[-1])
+        self.assertEqual(keys, [])
+        self.assertEqual([settings["unit"] for settings in saved], ["英里"])
 
     def test_run_in_browser(self):
         """假装在网页里: 用一个假的 js (网页那边), 让乱按的玩家玩几局, 看看交给网页的东西对不对"""
@@ -190,6 +197,7 @@ stops = random.Random(1)
 js.stopRequested = lambda: stops.random() < 0.02
 js.screenSize = lambda: "61,28"
 js.huntToPage = lambda on: messages.append({{"what": "hunt", "on": bool(on)}})
+js.settingsToPage = lambda text: messages.append({{"what": "settings", "settings": json.loads(text)}})
 taps = random.Random(2)   # 打猎时乱点屏幕、乱按键 (7 是点了第几行第几格, 1~6 是方向键、开枪、结束)
 js.huntEvents = lambda: ",".join(str(taps.choice([7000000 + taps.randrange(15) * 1000 + taps.randrange(62), 5000000, 1000000, 4000000, 8001030, 6000000]))
                                  for _ in range(taps.randrange(3)))
@@ -225,6 +233,8 @@ print(json.dumps(messages, ensure_ascii=False))
         self.assertEqual(driving[1::2], [False] * len(driving[1::2]))
         states = [message["state"] for message in messages if message["what"] == "state" and message["state"]]
         self.assertTrue(states and all("party" in state for state in states))
+        settings = [message["settings"] for message in messages if message["what"] == "settings"]
+        self.assertTrue(all(set(saved) == {"difficulty", "unit", "music", "animation"} for saved in settings))
         hunts = [message["on"] for message in messages if message["what"] == "hunt"]
         self.assertTrue(hunts)   # 网页里打猎是瞄准射击的那种
         self.assertEqual(hunts[::2], [True] * len(hunts[::2]))   # 开始打猎、打完了, 一对一对的

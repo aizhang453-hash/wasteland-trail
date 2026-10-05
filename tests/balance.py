@@ -45,7 +45,7 @@ def planner(game_box, screen, month):
     留着坐渡船的钱; 过河时水浅就开过去, 有渡船就坐渡船, 水只深一点就等两天看水退不退, 不然就浮过去。
     到了达尔斯, 钱够就交过路费走巴洛路, 不够就坐木筏, 急流里每次都选对水道"""
     thirst = 1.5 if month >= 6 else 1   # 夏天天热, 水要多带
-    plan = [str(DIFFICULTY), "1", "A", "1", str(month)]   # 难度、单位、名字、性别、出发月份
+    plan = ["A", "1", str(month)]   # 名字、性别、出发月份 (难度在「设置」里, 见 play_one)
     menu_visits = [0]
     # 出发前要买的东西 (一个人出发), 按顺序买, 钱不够了后面的就少买
     shopping = [("1", 60), ("2", round(60 * thirst)), ("3", 70), ("4", 40), ("6", 1), ("7", 1), ("8", 1)]
@@ -60,7 +60,7 @@ def planner(game_box, screen, month):
             raise RuntimeError(f"电脑玩家卡住了, 最后一个问题: {prompt}")
         if "选哪一项" in prompt:                  # 主菜单: 第一次开新游戏, 玩完一局回来就退出
             menu_visits[0] += 1
-            return "1" if menu_visits[0] == 1 else "5"
+            return "1" if menu_visits[0] == 1 else "6"
         if "确定, 开始新游戏" in prompt:          # 有旧存档也开新游戏
             return "1"
         if plan:
@@ -187,7 +187,7 @@ def novice(game_box, screen, month):
     坏天气多半照样赶路, 有人生病了不一定马上用药, 辐射很高了才打排辐剂, 吃的快没了才去打猎 (枪法一般), 水快没了有时去搜刮;
     到了据点先补快用完的东西; 过河、路上出事、急流都凭感觉选; 据点里愿意跟着走的人都带上, 碰到要换东西的、要搭车的一半会答应"""
     rng = random.Random(month * 1000 + random.randrange(1000))   # 新手自己拿主意用的随机数 (不打乱游戏的随机数)
-    plan = [str(DIFFICULTY), "1", "A", "1", str(month)]   # 难度、单位、名字、性别、出发月份
+    plan = ["A", "1", str(month)]   # 名字、性别、出发月份 (难度在「设置」里, 见 play_one)
     menu_visits = [0]
     # 出发前买东西: 每样花掉一开始的钱的几成 (凭感觉, 每局不一样); 冬衣、排辐剂、零件一半会忘了买
     shares = {"1": rng.uniform(0.15, 0.3), "2": rng.uniform(0.1, 0.25), "3": rng.uniform(0.25, 0.45),
@@ -207,7 +207,7 @@ def novice(game_box, screen, month):
             raise RuntimeError(f"新手卡住了, 最后一个问题: {prompt}")
         if "选哪一项" in prompt:
             menu_visits[0] += 1
-            return "1" if menu_visits[0] == 1 else "5"
+            return "1" if menu_visits[0] == 1 else "6"
         if "确定, 开始新游戏" in prompt:
             return "1"
         if plan:
@@ -311,9 +311,11 @@ def play_one(seed, month=None, who="planner"):
         return game
 
     with mock.patch.object(w, "new_game", new_game), \
+            mock.patch.dict(w.settings, {"difficulty": DIFFICULTY, "unit": "公里"}), \
             mock.patch("builtins.input", (novice if who == "novice" else planner)(game_box, screen, month)), \
             mock.patch.multiple(w, can_aim=lambda: True,
-                                hunt_keys=hunter_bot(game_box, *NOVICE_HUNT) if who == "novice" else hunter_bot(game_box)), \
+                                hunt_keys=hunter_bot(game_box, *NOVICE_HUNT) if who == "novice" else hunter_bot(game_box),
+                                load_settings=lambda: None, save_settings=lambda: None), \
             redirect_stdout(screen):
         w.main()
     return screen.getvalue()
@@ -327,7 +329,8 @@ def main(rounds, who="planner"):
     # 存档和最高分榜放到临时文件夹, 不碰玩家真正的存档和最高分
     with tempfile.TemporaryDirectory() as tmp, \
             mock.patch.object(w, "SAVE_FILE", os.path.join(tmp, "savegame.json")), \
-            mock.patch.object(w, "HIGH_SCORE_FILE", os.path.join(tmp, "highscores.json")):
+            mock.patch.object(w, "HIGH_SCORE_FILE", os.path.join(tmp, "highscores.json")), \
+            mock.patch.object(w, "SETTINGS_FILE", os.path.join(tmp, "settings.json")):
         for seed in range(rounds):
             text = play_one(seed, who=who)
             endings[re.findall(r"【(.*?结局.*?)】", text)[-1]] += 1

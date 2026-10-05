@@ -330,6 +330,7 @@
 <script>
   const SAVE_KEY = "wasteland-trail-save";       // 存档在浏览器里的名字
   const SCORES_KEY = "wasteland-trail-scores";   // 最高分榜在浏览器里的名字
+  const SETTINGS_KEY = "wasteland-trail-settings";   // 主菜单「设置」里改的 (难度、距离单位、过场动画) 在浏览器里的名字
   const MUSIC_KEY = "wasteland-trail-music";     // 音乐开关 ("off" 是关着) 在浏览器里的名字
   const app = document.getElementById("app");
   const screenBox = document.getElementById("screen");
@@ -766,7 +767,7 @@
   const ICONS = {
     "继续前进": "🚗", "休息": "⛺", "搜刮废墟": "🔍", "打猎": "🎯", "交易": "🤝", "用药": "💊",
     "改变口粮": "🍲", "改变速度": "⏩", "丢东西": "🗑️", "和人说话": "💬", "买卖东西": "🛒", "查看队伍": "👥", "旅行日记": "📖", "存档": "💾",
-    "开始新游戏": "🆕", "继续游戏": "▶️", "游戏说明": "❓", "最高分": "🏆", "退出游戏": "🚪",
+    "开始新游戏": "🆕", "继续游戏": "▶️", "游戏说明": "❓", "最高分": "🏆", "设置": "⚙️", "退出游戏": "🚪",
   };
 
   function onGui(text) {
@@ -1093,6 +1094,7 @@
       else if (message.type === "gui") onGui(message.text);
       else if (message.type === "save") writeStored(SAVE_KEY, message.text);
       else if (message.type === "scores") writeStored(SCORES_KEY, message.text);
+      else if (message.type === "settings") writeStored(SETTINGS_KEY, message.text);
       else if (message.type === "music") playMusic(JSON.parse(message.text));
       else if (message.type === "loop") startLoop(message.text);
       else if (message.type === "hunt") setHunting(message.on);
@@ -1112,7 +1114,8 @@
     worker.onerror = (event) => write("\n网页版出错了: " + (event.message || "后台没能把游戏载入") + "\n" +
       "刷新网页再试一次。还是不行的话, 请到 https://github.com/aizhang453-hash/wasteland-trail/issues 告诉作者用的是什么设备和浏览器。\n");
     write("正在启动废土之旅……\n");
-    worker.postMessage({ inputMemory: memory, flagsMemory, savedGame: readStored(SAVE_KEY), savedScores: readStored(SCORES_KEY) });
+    worker.postMessage({ inputMemory: memory, flagsMemory, savedGame: readStored(SAVE_KEY), savedScores: readStored(SCORES_KEY),
+                          savedSettings: readStored(SETTINGS_KEY) });
   }
 
   start();
