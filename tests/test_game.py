@@ -110,6 +110,8 @@ class GameTest(unittest.TestCase):
         patcher = mock.patch.dict(w.settings, w.DEFAULT_SETTINGS)   # 主菜单「设置」里的东西, 每个测试都从没改过的开始
         patcher.start()
         self.addCleanup(patcher.stop)
+        w.layout["on"] = False   # 终端里的方框: 每个测试都从不用方框开始
+        self.addCleanup(w.layout.update, on=False)
         # 测试队伍的物资给得很足 (每样 100 个, 好几吨), 一般的测试就把车当成无限大
         patcher = mock.patch.object(w, "CAR_CAPACITY", 10 ** 12)
         patcher.start()
@@ -1920,6 +1922,87 @@ class GameTest(unittest.TestCase):
         self.assertEqual(game["distance"], w.TOTAL_DISTANCE)
         self.assertNotIn("【", screen.getvalue())
 
+    # ---------- 终端里的方框 (v4.1) ----------
+
+    def big_terminal(self, size=(140, 45)):
+        """假装在 Mac 的终端里 (能一个键一个键地读、能换画面), 窗口是 size (列, 行)"""
+        return mock.patch.multiple(w, can_read_keys=lambda: True, can_clear_screen=lambda: True,
+                                   screen_size=lambda: size, msvcrt=None)
+
+    def test_frame_in_the_middle_of_a_big_terminal(self):
+        """终端窗口够大: 清屏以后画一个方框, 摆在窗口正中间; 光标放到方框里写字的地方 (方框正中间 80 格)"""
+        with self.big_terminal(), redirect_stdout(io.StringIO()) as screen:
+            w.clear_screen()
+        text = screen.getvalue()
+        left, top = (140 - w.DASHBOARD_WIDTH) // 2, (45 - 1 - w.FRAME_ROWS) // 2
+        self.assertIn(f"\x1b[{top + 1};{left + 1}H+-- ", text)                                    # 上边, 写着「废土之旅」
+        self.assertIn(f"\x1b[{top + 2};{left + 1}H|" + " " * (w.DASHBOARD_WIDTH - 2) + "|", text)   # 左右两条边
+        self.assertIn(f"\x1b[{top + w.FRAME_ROWS};{left + 1}H+" + "-" * (w.DASHBOARD_WIDTH - 2) + "+", text)
+        start = left + 1 + (w.DASHBOARD_WIDTH - w.FRAME_PAGE) // 2
+        self.assertTrue(text.endswith(f"\x1b[{top + 2};{start}H"))
+        self.assertEqual(w.page_start(), start)
+
+    def test_words_stay_inside_the_frame(self):
+        """方框里: 每一行都从方框里写起; 太长的行折下来; 擦掉一行以后把右边的边补上; 不擦下面 (会把方框擦掉)"""
+        with self.big_terminal(), redirect_stdout(io.StringIO()):
+            w.clear_screen()
+            to_start = f"\x1b[{w.page_start()}G"
+            self.assertEqual(w.place_text("你好\n再见"), f"你好\n{to_start}再见")
+            self.assertEqual(w.place_text("\n" + "字" * 50).count("\n" + to_start), 2)   # 100 格, 一行只写 80 格
+            self.assertTrue(w.place_text("\x1b[K").startswith(f"\x1b[K\x1b[{w.layout['left'] + w.DASHBOARD_WIDTH}G|"))
+            self.assertEqual(w.place_text("\x1b[J"), "")
+            self.assertEqual(w.place_text("\r"), to_start)
+            self.assertEqual(w.place_text("\x1b[H"), f"\x1b[{w.layout['top'] + 2};{w.page_start()}H")
+            self.assertEqual(w.place_text("\x1b[31m红\x1b[0m\x1b[3A"), "\x1b[31m红\x1b[0m\x1b[3A")   # 颜色、往上移不变
+
+    def test_typing_moves_back_into_the_frame(self):
+        """玩家打完字按了回车, 光标回到了窗口最左边: 接着写的字先挪回方框里"""
+        with self.big_terminal(), mock.patch("builtins.input", lambda p="": "小明"), \
+                redirect_stdout(io.StringIO()) as screen:
+            w.clear_screen()
+            self.assertEqual(w.ask_text("你叫什么名字? "), "小明")
+            w.print("你好")
+            to_start = f"\x1b[{w.page_start()}G"
+        self.assertTrue(screen.getvalue().endswith(f"{to_start}你好\n{to_start}"))
+
+    def test_dashboard_is_centered_without_another_frame(self):
+        """大画面自己有方框: 不再画一个, 只是摆在窗口中间"""
+        with self.big_terminal(), redirect_stdout(io.StringIO()) as screen:
+            w.clear_screen(framed=False)
+            self.assertEqual(w.place_text("\x1b[H"), f"\x1b[{w.layout['top'] + 1};{(140 - w.DASHBOARD_WIDTH) // 2 + 1}H")
+        self.assertNotIn("+--", screen.getvalue())
+
+    def test_no_frame_in_a_small_terminal(self):
+        """80 x 24 的小终端放不下大画面: 不用方框, 跟以前一样从左上角写"""
+        with self.big_terminal((80, 24)), redirect_stdout(io.StringIO()) as screen:
+            w.clear_screen()
+            self.assertEqual(w.place_text("你好\n"), "你好\n")
+        self.assertEqual(screen.getvalue(), "\x1b[H\x1b[2J\x1b[3J")
+
+    def test_fit_window(self):
+        """一打开游戏, 把终端窗口调成正好放得下游戏; 设置里关了、或者不在终端里就不调"""
+        with self.big_terminal(), mock.patch.object(w.time, "sleep", lambda seconds: None), \
+                redirect_stdout(io.StringIO()) as screen:
+            w.fit_window()
+        self.assertEqual(screen.getvalue(), f"\x1b[8;{w.WINDOW_ROWS};{w.WINDOW_COLUMNS}t")
+        with self.big_terminal((w.WINDOW_COLUMNS, w.WINDOW_ROWS)), redirect_stdout(io.StringIO()) as screen:
+            w.fit_window()   # 已经正好了
+        w.settings["window"] = False
+        with self.big_terminal(), redirect_stdout(io.StringIO()) as screen2:
+            w.fit_window()
+        with redirect_stdout(io.StringIO()) as screen3:
+            w.settings["window"] = True
+            w.fit_window()   # 跑测试的时候不在终端里
+        self.assertEqual(screen.getvalue() + screen2.getvalue() + screen3.getvalue(), "")
+
+    def test_leave_the_frame_when_quitting(self):
+        """退出游戏: 光标挪到方框下面, 终端接下来的字不会写进方框里"""
+        with self.big_terminal(), redirect_stdout(io.StringIO()) as screen:
+            w.clear_screen()
+            w.leave_layout()
+        self.assertTrue(screen.getvalue().endswith(f"\x1b[{w.layout['top'] + w.layout['height'] + 1};1H"))
+        self.assertFalse(w.layout["on"])
+
     # ---------- 背景故事 (v4.0) ----------
 
     def test_opening_tells_the_story(self):
@@ -1934,7 +2017,7 @@ class GameTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as opening:
             w.show_opening(game)
         for line in opening.getvalue().split("\n"):
-            self.assertLess(w.text_width(line), 80, line)
+            self.assertLessEqual(w.text_width(line), 61, line)   # 网页版的屏幕是 61 列
         self.assertIn("开着捡来的车", game["diary"][0])
 
     def test_government_bases(self):
@@ -1954,7 +2037,7 @@ class GameTest(unittest.TestCase):
         game["visited"] += [name for start, _, name, *_ in w.HOTSPOTS if start < 999]
         with mock.patch("builtins.input", lambda p="": asked.append(p) or "2"), redirect_stdout(io.StringIO()) as screen:
             w.check_places(game)
-        self.assertIn("一直到俄勒冈城, 都是美国政府的地盘", screen.getvalue())
+        self.assertIn("从这里往西, 是美国政府的地盘", screen.getvalue())
         self.assertIn("基地里也有人在做买卖, 要进去买卖东西吗", asked[-1])
         self.assertIn("到了拉勒米堡, 这里现在是美国政府的基地", game["diary"][-1])
 
@@ -1972,11 +2055,21 @@ class GameTest(unittest.TestCase):
         self.assertTrue(any(line in screen.getvalue() for line in w.STORY_TALK["独立城"]))
 
     def test_story_talk_keeps_the_secret(self):
-        """主角不知道俄勒冈城是政府的后备据点, 路上谁都不说破"""
-        for lines in w.STORY_TALK.values():
-            for line in lines:
-                self.assertNotIn("后备", line)
-                self.assertNotIn(w.DESTINATION, line)
+        """主角不知道俄勒冈城是政府的后备据点, 路上谁都不说破: 和人说话、政府基地的说明、到了每个政府基地说的话"""
+        texts = [line for lines in w.STORY_TALK.values() for line in lines] + list(w.BASE_NOTES.values())
+        for name in w.GOVERNMENT_BASES:
+            km = next(km for km, (place, _) in w.OUTPOSTS.items() if place == name)
+            game = new_test_game()
+            game["distance"] = km
+            game["visited"] = [place for at, (place, _) in list(w.LANDMARKS.items()) + list(w.OUTPOSTS.items()) if at < km]
+            game["visited"] += [place for start, _, place, *_ in w.HOTSPOTS if start < km]
+            with mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()) as screen:
+                w.check_places(game)
+            texts += [line for line in screen.getvalue().split("\n") if "政府" in line]
+        self.assertTrue(any("政府的地盘" in text for text in texts))
+        for text in texts:
+            self.assertNotIn("后备", text)
+            self.assertNotIn(w.DESTINATION, text)
 
     def test_every_government_base_is_different(self):
         """5 个政府基地各有各的画和说明, 不是千篇一律"""
@@ -1994,7 +2087,7 @@ class GameTest(unittest.TestCase):
             w.arrive(game)
         self.assertIn("俄勒冈城是美国政府的后备据点", screen.getvalue())
         self.assertIn("政府收下了你们", screen.getvalue())
-        self.assertIn("政府收下了大家", game["diary"][-1])
+        self.assertIn("政府收下了A、B、C、D", game["diary"][-1])   # 日记里不说「你」, 写名字
 
     # ---------- 得分和最高分 ----------
 
@@ -2696,16 +2789,18 @@ class GameTest(unittest.TestCase):
             self.assertIn(words, text)
 
     def test_settings(self):
-        """主菜单的「设置」: 换难度、换成英里、关音乐、关动画, 都记下来; 下次打开游戏 (重新读设置) 还是这样"""
-        text = self.run_main(["5", "1", "1", "2", "2", "3", "4", "0", "6"])   # 设置: 难度→简单, 单位→英里, 音乐, 动画, 回去, 退出
+        """主菜单的「设置」: 换难度、换成英里、关音乐、关动画、不自动调窗口, 都记下来; 下次打开游戏 (重新读设置) 还是这样"""
+        text = self.run_main(["5", "1", "1", "2", "2", "3", "4", "5", "0", "6"])   # 难度→简单, 英里, 音乐, 动画, 窗口, 回去, 退出
         for words in ["------ 设置 ------", "1. 难度: 普通", "2. 距离单位: 公里", "3. 音乐: 开", "4. 过场动画: 开",
-                      "1. 难度: 简单", "2. 距离单位: 英里", "3. 音乐: 关", "4. 过场动画: 关"]:
+                      "5. 自动调整窗口大小: 开", "1. 难度: 简单", "2. 距离单位: 英里", "3. 音乐: 关", "4. 过场动画: 关",
+                      "5. 自动调整窗口大小: 关"]:
             self.assertIn(words, text)
+        changed = {"difficulty": 1, "unit": "英里", "music": False, "animation": False, "window": False}
         with open(w.SETTINGS_FILE, encoding="utf-8") as f:
-            self.assertEqual(json.load(f), {"difficulty": 1, "unit": "英里", "music": False, "animation": False})
+            self.assertEqual(json.load(f), changed)
         w.settings.update(w.DEFAULT_SETTINGS)   # 假装重新打开游戏
         w.load_settings()
-        self.assertEqual(w.settings, {"difficulty": 1, "unit": "英里", "music": False, "animation": False})
+        self.assertEqual(w.settings, changed)
 
     def test_bad_settings_file(self):
         """设置文件坏了、哪一项不对, 就用原来的"""
@@ -2734,6 +2829,7 @@ class GameTest(unittest.TestCase):
             w.settings_menu()
         self.assertNotIn("3. 音乐", screen.getvalue())
         self.assertIn("3. 过场动画", screen.getvalue())
+        self.assertNotIn("窗口", screen.getvalue())   # 网页版没有终端窗口要调
         self.assertIn("右上角的「♪」", screen.getvalue())
 
     def test_continue_without_save(self):

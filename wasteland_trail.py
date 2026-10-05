@@ -42,7 +42,7 @@ SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settin
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v4.0"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v4.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -61,7 +61,7 @@ DIFFICULTIES = {
     3: ("困难", 370, 140, 140, 150, "钱很紧, 路上出事、生病都多不少"),
 }
 # 主菜单的「设置」(难度、距离单位、音乐、过场动画) 没改过的时候是什么样。改了会存进 SETTINGS_FILE, 下次打开游戏还是那样
-DEFAULT_SETTINGS = {"difficulty": 2, "unit": "公里", "music": True, "animation": True}
+DEFAULT_SETTINGS = {"difficulty": 2, "unit": "公里", "music": True, "animation": True, "window": True}
 # 在这些难度里, 过河翻车、坐木筏撞上礁石都不会有人被冲走 (第一次玩的人常常在一开始还只有自己一个人的时候,
 # 在头两条河就被冲走了, 一局一下子就结束, 太狠了)
 NO_DROWNING = [1]
@@ -202,7 +202,7 @@ STORY_TALK = {
     "独立城": [
         "往俄勒冈去? 那边有官方的人在收人, 这话我也听过。要我说, 多半是骗人的。",
         "二十年前那一天, 天上全是核弹的白烟。等我从地底下爬出来, 城已经没了。",
-        "往西头一段路沿着普拉特河走。河边那条老铁路, 现在归铁道组织管。",
+        "往西过了堪萨斯, 就要沿着普拉特河走了。河边那条老铁路, 现在归铁道组织管。",
         "能开的车可不好找。你那辆车没怎么坏, 算你走运。",
     ],
     "东边": [
@@ -451,6 +451,16 @@ KEEP_DRIVING = True       # 改成 False 就是选一次「继续前进」只走
 DASHBOARD = True          # 不想要就改成 False
 DASHBOARD_WIDTH = 100     # 大画面有多宽 (窗口要比这个宽一点才用)
 DASHBOARD_ROWS = 28       # 窗口至少要有几行才用大画面
+# 终端里的方框: 电脑的终端窗口够大的时候 (放得下大画面), 每个画面都摆在窗口正中间一块 DASHBOARD_WIDTH 宽的地方;
+# 普通的画面外面画一个方框, 字写在方框正中间 FRAME_PAGE 格宽的地方 (大画面自己就有方框)。不会再挤在窗口的左上角。
+# 只在 Mac 和 Linux 的终端里用 (Windows 的终端还没试过)
+FRAME = True              # 不想要就改成 False
+FRAME_ROWS = 30           # 这一块最高几行 (窗口更高也只用这么多, 上下也摆在中间)
+FRAME_PAGE = 80           # 普通的画面一行最多写几格 (游戏的画面都是按 80 列的终端排的)
+# 一打开游戏, 先把终端窗口调成正好放得下这一块 (Mac 自带的终端、Linux 的大多数终端认得; 窗口全屏的时候调不了)。
+# 玩的人在主菜单的「设置」里可以关掉
+WINDOW_COLUMNS = DASHBOARD_WIDTH + 2
+WINDOW_ROWS = FRAME_ROWS + 1   # 最下面空一行, 退出游戏以后终端接着写字的时候不会盖到方框
 # 网页版的图形界面: 按钮、状态面板、地图、旅行日记都由网页来画, 游戏只要告诉网页现在的状态 (gui_update) 和在问什么。
 # 这时候游戏自己就不画状态栏和大画面了。由 web/run_in_browser.py 打开, 在电脑上玩一直是 False
 GUI = False
@@ -516,11 +526,140 @@ HUNT_IN_BROWSER = False   # 网页认不认得打猎时的点击 (run_in_browser
 # room 是开车的时候, 动画 (或者大画面) 下面还有没有地方写路上发生的事; frame 是车开到动画的第几帧 (停下来以后画面接得上)
 screen = {"unread": False, "driving": False, "room": True, "frame": 0}
 
+# 终端里的方框 (见 FRAME): on 是现在用不用; framed 是这个画面外面有没有方框 (大画面自己有方框, 不用再画);
+# left、top 是这一块的左上角在窗口里往右、往下挪了几格; height 是这一块有几行 (宽是 DASHBOARD_WIDTH);
+# column 是光标现在在这一行写到了第几格 (None 是不知道, 比如玩家刚打完字按了回车, 光标回到了窗口最左边);
+# saved 是控制字符 \x1b7 记住光标的时候, 光标在第几格
+layout = {"on": False, "framed": False, "left": 0, "top": 0, "height": FRAME_ROWS, "column": None, "saved": None}
+LAYOUT_CODES = re.compile(r"(\x1b\[[\d;?]*[A-Za-z]|\x1b[78])")   # 控制字符: 光标怎么动、什么颜色……
+
+
+def can_frame():
+    """能不能用终端里的方框: 设置里没关掉、能换画面, 在 Mac 或 Linux 真正的终端里 (跑测试时不用), 窗口放得下大画面"""
+    if not (FRAME and can_clear_screen() and can_read_keys()) or IN_BROWSER or GUI or msvcrt:
+        return False
+    columns, rows = screen_size()
+    return columns > DASHBOARD_WIDTH and rows >= DASHBOARD_ROWS
+
+
+def start_layout(framed):
+    """清屏以后用: 算好这一块摆在窗口的哪里 (窗口可能拉大拉小了)。返回要印的控制字符: framed 的话画上方框,
+    再把光标挪到写字的地方 (\x1b[行;列H 是把光标挪到第几行第几格)"""
+    layout["on"] = can_frame()
+    if not layout["on"]:
+        return ""
+    columns, rows = screen_size()
+    height = min(rows - 1, FRAME_ROWS)
+    layout.update(framed=framed, height=height, column=0, saved=None,
+                  left=(columns - DASHBOARD_WIDTH) // 2, top=(rows - 1 - height) // 2)
+    top, left = layout["top"], layout["left"]
+    text = ""
+    if framed:
+        words = f"-- {colored('废土之旅', '黄', bold=True)} "
+        rows = ["+" + words + "-" * (DASHBOARD_WIDTH - 2 - visible_width(words)) + "+"]
+        rows += ["|" + " " * (DASHBOARD_WIDTH - 2) + "|"] * (height - 2)
+        rows += ["+" + "-" * (DASHBOARD_WIDTH - 2) + "+"]
+        text = "".join(f"\x1b[{top + 1 + i};{left + 1}H{row}" for i, row in enumerate(rows))
+    return text + f"\x1b[{top + (2 if framed else 1)};{page_start()}H"
+
+
+def page_start():
+    """这一块里每一行从窗口的第几格写起 (有方框的话, 字写在方框正中间)"""
+    return layout["left"] + 1 + ((DASHBOARD_WIDTH - FRAME_PAGE) // 2 if layout["framed"] else 0)
+
+
+def place_text(text):
+    """终端里用方框的时候, 把要印的字挪进这一块里 (不用方框就原样返回):
+    每一行都从这一块的左边写起 (\x1b[NG 是把光标挪到这一行的第 N 格); 太长的行折下来, 不会盖掉方框右边的边;
+    回到左上角 (\x1b[H) 是回到这一块的左上角; 有方框的时候, 擦掉一行剩下的字 (\x1b[K) 以后把右边的边补上,
+    也不擦下面的字 (\x1b[J, 会连方框一起擦掉)"""
+    if not layout["on"]:
+        return text
+    framed = layout["framed"]
+    width = FRAME_PAGE if framed else DASHBOARD_WIDTH   # 一行最多写几格
+    to_start = f"\x1b[{page_start()}G"
+    out = []
+    column = layout["column"]
+    if column is None:   # 不知道光标在哪一格 (玩家刚按了回车): 先挪回这一行的开头
+        out.append(to_start)
+        column = 0
+    for part in LAYOUT_CODES.split(text):
+        if part.startswith("\x1b"):
+            if part == "\x1b[H":
+                out.append(f"\x1b[{layout['top'] + (2 if framed else 1)};{page_start()}H")
+                column = 0
+            elif part == "\x1b[K" and framed:
+                out.append(f"\x1b[K\x1b[{layout['left'] + DASHBOARD_WIDTH}G|")
+                column = width   # 光标到了方框外面: 这一行再写字就先折下来
+            elif part == "\x1b[J" and framed:
+                pass
+            elif part == "\x1b7":
+                layout["saved"] = column
+                out.append(part)
+            elif part == "\x1b8":
+                column = layout["saved"]
+                out.append(part)
+            else:
+                out.append(part)   # 颜色、光标往上移 (还在同一格)、藏起光标这些, 原样留着
+            continue
+        for char in part:
+            if char == "\n":
+                out.append("\n" + to_start)
+                column = 0
+            elif char == "\r":
+                out.append(to_start)
+                column = 0
+            elif char == "\b":
+                out.append(char)
+                column = max(0, (column or 0) - 1)
+            else:
+                size = text_width(char)
+                if column is None or column + size > width:
+                    out.append("\n" + to_start)
+                    column = 0
+                out.append(char)
+                column += size
+    layout["column"] = column
+    return "".join(out)
+
+
+def put(text, flush=False):
+    """原样印出来 (不加换行, 也不算新消息), 终端里用方框的时候挪进方框里。画面上的控制字符 (动画、开车的画面) 都用它印"""
+    builtins.print(place_text(text), end="", flush=flush)
+
+
+def ask_text(prompt):
+    """让玩家打一行字 (比如名字)。终端里用方框的时候, 先把光标挪到写字的地方; 玩家按了回车以后, 光标回到了窗口最左边"""
+    put("", flush=True)
+    text = input(prompt)
+    layout["column"] = None
+    return text
+
+
+def leave_layout():
+    """退出游戏的时候: 光标挪到这一块的下面, 终端接下来的字不会写进方框里"""
+    if layout["on"]:
+        builtins.print(f"\x1b[{layout['top'] + layout['height'] + 1};1H", end="", flush=True)
+        layout["on"] = False
+
+
+def fit_window():
+    """一打开游戏, 先把终端窗口调成正好放得下游戏 (\x1b[8;行;列t, Mac 自带的终端和 Linux 的大多数终端认得;
+    窗口全屏、或者终端不认得的时候, 什么都不会发生)。设置里关了就不调"""
+    if not (settings["window"] and FRAME and can_clear_screen() and can_read_keys()) or IN_BROWSER or GUI or msvcrt:
+        return
+    if screen_size() == (WINDOW_COLUMNS, WINDOW_ROWS):
+        return
+    builtins.print(f"\x1b[8;{WINDOW_ROWS};{WINDOW_COLUMNS}t", end="", flush=True)
+    time.sleep(0.2)   # 等终端把窗口调好, 后面再量窗口多大
+
 
 def print(*args, **kwargs):
     """跟 Python 自带的 print 一样, 只是顺便记下「屏幕上多了新消息」。这个文件里的 print 都会经过这里。
-    每天都会说一遍的例行消息 (比如今天开了多远) 不算新消息, 要用 print_routine"""
-    builtins.print(*args, **kwargs)
+    每天都会说一遍的例行消息 (比如今天开了多远) 不算新消息, 要用 print_routine。
+    终端里用方框的时候, 字会挪进方框里 (见 place_text)"""
+    sep, end = kwargs.get("sep", " "), kwargs.get("end", "\n")
+    put(sep.join(str(arg) for arg in args) + ("\n" if end is None else end), flush=kwargs.get("flush", False))
     if any(str(arg).strip() for arg in args):
         screen["unread"] = True
 
@@ -529,7 +668,7 @@ def print_routine(text):
     """例行消息: 跟 print 一样显示出来, 只是不算新消息, 换画面前不用等玩家看。
     一直往前开的时候干脆不印 (动画下面的状态栏都看得到), 不然每天都要按一次回车"""
     if not screen["driving"]:
-        builtins.print(text)
+        put(text + "\n")
 
 
 def can_clear_screen():
@@ -537,9 +676,10 @@ def can_clear_screen():
     return SCREENS and (can_read_keys() or IN_BROWSER)
 
 
-def clear_screen():
-    """把屏幕清空, 光标回到左上角。\\x1b[H 是回到左上角, \\x1b[2J 是清屏, \\x1b[3J 是连往上翻才看得到的旧字也清掉"""
-    builtins.print("\x1b[H\x1b[2J\x1b[3J", end="", flush=True)
+def clear_screen(framed=True):
+    """把屏幕清空, 光标回到左上角。\\x1b[H 是回到左上角, \\x1b[2J 是清屏, \\x1b[3J 是连往上翻才看得到的旧字也清掉。
+    终端里用方框的时候, framed 是要不要画方框 (大画面自己有方框, 就不用)"""
+    builtins.print("\x1b[H\x1b[2J\x1b[3J" + start_layout(framed), end="", flush=True)
     screen["unread"] = False
 
 
@@ -551,14 +691,14 @@ def event_screen():
     new_screen()
 
 
-def new_screen():
+def new_screen(framed=True):
     """换一个新画面: 屏幕上还有玩家没看过的新消息, 就先等玩家按回车; 再把屏幕清空, 从最上面写起。
-    不能换画面的时候 (比如跑测试) 什么都不做, 字还是一直往下写"""
+    不能换画面的时候 (比如跑测试) 什么都不做, 字还是一直往下写。framed 见 clear_screen"""
     if not can_clear_screen():
         return
     if screen["unread"]:
         wait_enter()
-    clear_screen()
+    clear_screen(framed)
 
 
 def wait_enter(prompt="按回车继续……"):
@@ -1157,7 +1297,7 @@ def setup(game):
     print(colored(f"\n难度: {name} (一开始有 {money} 块钱)。想换难度或者距离单位, 回到主菜单的「设置」里改。", "灰"))
     show_opening(game)
     new_screen()   # 看完开场, 换个画面起名字
-    leader = input("你叫什么名字? (直接按回车就叫\"队长\") ").strip() or "队长"
+    leader = ask_text("你叫什么名字? (直接按回车就叫\"队长\") ").strip() or "队长"
     gender = ask_number("你的性别: 1. 男  2. 女  ", 1, 2)
     game["gender"] = "男" if gender == 1 else "女"
     show_picture(PORTRAITS[game["gender"]], words=["", "", f"{leader}, 这就是你。"])
@@ -1186,12 +1326,16 @@ def show_opening(game):
     print("\n二十年过去了。")
     print("\n你在密苏里州独立城地下的避难所里出生, 从来没见过外面的世界。")
     print("十八岁那年, 避难所里出了一桩命案。真凶是所长的儿子,")
-    print("他带着人把罪名栽到了你头上。你被赶出避难所, 扔到废土上自生自灭。")
-    print("\n你在独立城靠拾荒活了下来。如今的独立城, 是拾荒者聚居的地方。")
+    print("他带着人把罪名栽到了你头上。")
+    print("你被赶出避难所, 扔到废土上自生自灭。")
+    new_screen()   # 分成两个画面: 网页版在手机上竖着只看得到 18 行, 放在一起开头几句会被挤出屏幕
+    print("\n你在独立城靠拾荒活了下来。")
+    print("如今的独立城, 是拾荒者聚居的地方。")
     print("有人说, 俄勒冈那边有官方的人, 正在收人, 缺干活的人手。")
     print("很多人不信。你想去试一试。")
     print("\n你捡到了一辆车, 居然没怎么坏, 还能开。")
-    print(f"你要开着它, 沿着课本里讲过的俄勒冈小道, 去 {show_distance(game, TOTAL_DISTANCE)}外的{DESTINATION}。")
+    print("你要开着它, 沿着课本里讲过的俄勒冈小道,")
+    print(f"去 {show_distance(game, TOTAL_DISTANCE)}外的{DESTINATION}。")
     print("路上的据点里, 也许能遇到愿意跟你走的人。")
 
 
@@ -1596,15 +1740,17 @@ def drive_on(game):
     frame = screen["frame"]
     try:
         stop_pressed(0)   # 之前按的键不算
-        clear_screen()
+        clear_screen(framed=not use_dashboard())
         while True:
             gui_update(game)         # 网页版的图形界面: 告诉网页今天的状态
             wide = use_dashboard()   # 窗口够大就用大画面 (每天看一次, 窗口拉大拉小也跟得上)
+            if wide:
+                layout["framed"] = False   # 大画面自己有方框 (路上出事换过画面的话, 那个画面的方框会被大画面盖掉)
             stuck = WEATHER[game["weather"]][0] > 0 and out_of_fuel(game)   # 燃料不够, 车开不动了
             parts = dashboard_parts(game, car_word(game, moving=True)) if wide else None   # 大画面的别的几块, 今天不变
             if not stuck:
                 rows, _, moving = drive_screen(game, frame, wide, parts)
-                builtins.print(redraw(rows) + "\x1b[J", flush=True)
+                put(redraw(rows) + "\x1b[J\n", flush=True)
                 screen["unread"] = False
                 # 一天的动画: 一帧一帧地画 (只重画动画那几行), 每画一帧都看看玩家有没有按键, 按了马上停 (这一天还没开完, 不算)
                 for _ in range(DRIVE_DAY_FRAMES):
@@ -1612,16 +1758,17 @@ def drive_on(game):
                     screen["frame"] = frame
                     if can_animate():
                         rows, _, moving = drive_screen(game, frame, wide, parts)
-                        builtins.print("\x1b[?25l" + redraw(rows[:moving]), end="", flush=True)
+                        put("\x1b[?25l" + redraw(rows[:moving]), flush=True)
                     if stop_pressed(ANIMATION_DELAY):
                         return
             # 这一天开完了: 动画 (大画面的话是整个方框) 留着, 擦掉下面的字, 路上发生的事写在下面 (像原版那样车还在画面上)
             rows, keep, _ = drive_screen(game, frame, wide, parts)
             if keep:
-                builtins.print("\x1b[?25h" + redraw(rows[:keep]) + "\n\x1b[J", end="")
+                put("\x1b[?25h" + redraw(rows[:keep]) + "\n\x1b[J")
             else:
                 clear_screen()
-            screen["room"] = screen_size()[1] - keep >= EVENT_ROOM   # 下面放得下一件事才写在下面, 不然换新画面
+            rows_here = layout["height"] if layout["on"] else screen_size()[1]   # 用方框的时候, 只算这一块
+            screen["room"] = rows_here - keep >= EVENT_ROOM   # 下面放得下一件事才写在下面, 不然换新画面
             weather = game["weather"]
             places = len(game["visited"])
             drive_one_day(game, animate=False)
@@ -2111,7 +2258,7 @@ def hunt_game(game):
     try:
         if show:
             clear_screen()
-            builtins.print("\x1b[?25l", end="")   # 藏起光标, 不然它在画面上一闪一闪
+            put("\x1b[?25l")   # 藏起光标, 不然它在画面上一闪一闪
             hunt_screen(True)
         if reading:
             forget_keys()   # 之前按的键不算
@@ -2122,12 +2269,12 @@ def hunt_game(game):
             hunting["left"] -= 1
             hunting["frame"] += 1
             if show:
-                builtins.print(redraw(hunt_rows(game, hunting)), end="", flush=True)
+                put(redraw(hunt_rows(game, hunting)), flush=True)
                 time.sleep(HUNT_DELAY)
         if not hunting["over"]:
             hunting["message"] = "时间到了, 天快黑了。"
         if show:   # 最后一帧留在画面上, 下面写打到了什么
-            builtins.print(redraw(hunt_rows(game, hunting)) + "\n\x1b[J", end="", flush=True)
+            put(redraw(hunt_rows(game, hunting)) + "\n\x1b[J", flush=True)
     finally:
         if show:
             builtins.print("\x1b[?25h", end="", flush=True)
@@ -2344,7 +2491,7 @@ def typing_hunt(game):
     wait_enter("准备好了就按回车……")
     print(f"\n    >>> {colored(word, '黄', bold=True)} <<<\n")
     start = time.time()
-    typed = input("快打: ").strip().lower()
+    typed = ask_text("快打: ").strip().lower()
     seconds = time.time() - start
 
     low, high = ANIMALS[animal]
@@ -2477,15 +2624,15 @@ def talk(game):
     if not place:
         print("\n四下里一个人影都没有。到了地标、据点这些地方, 再找人问问吧。")
         return
-    outpost = place in OUTPOST_NAMES
-    if place == START_PLACE:
+    region = story_region(game)
+    if region == "独立城":
         talkers = START_TALKERS
     elif place in GOVERNMENT_BASES:
         talkers = BASE_TALKERS
     else:
-        talkers = OUTPOST_TALKERS if outpost else ROAD_TALKERS
+        talkers = OUTPOST_TALKERS if place in OUTPOST_NAMES else ROAD_TALKERS
     tips = random.Random(place).sample(TALK_TIPS, 2)   # 每个地方的人说的提醒不一样, 可同一个地方每次问都一样
-    story = random.Random(place + "故事").sample(STORY_TALK[story_region(game)], 2)
+    story = random.Random(place + "故事").sample(STORY_TALK[region], 2)
     lines = story[:1] + [line for line in (topic(game) for topic in TALK_TOPICS) if line] + story[1:] + tips
     heard = game["talk"][1] if game["talk"][0] == place else 0   # 在这里已经听了几次
     game["talk"] = [place, heard + 1]
@@ -2726,16 +2873,17 @@ def check_places(game):
             continue
         play_music("据点")
         print(f"\n{you(game)}到了{title(name, '青')}{intro}")
+        base = name in GOVERNMENT_BASES   # 拉勒米堡往西是政府的基地
         if name == GOVERNMENT_FROM:
-            print(colored("从这里往西, 一直到俄勒冈城, 都是美国政府的地盘。", "黄"))
-        if name in GOVERNMENT_BASES:
+            print(colored("从这里往西, 是美国政府的地盘。", "黄"))   # 不说到哪里为止: 主角不知道终点是政府的后备据点
+        if base:
             print(colored("这里现在是美国政府重新占领的基地, 驻着政府的人。", "黄"))
             print(BASE_NOTES[name])
             write_diary(game, f"到了{name}, 这里现在是美国政府的基地。", km)
         else:
             write_diary(game, f"到了{name}。", km)
         offer_recruit(game, name, km)
-        traders = "基地里也有人" if name in GOVERNMENT_BASES else "这里有幸存者"
+        traders = "基地里也有人" if base else "这里有幸存者"
         if ask_number(f"{traders}在做买卖, 要进去买卖东西吗? 1. 要  2. 不要  ", 1, 2) == 1:
             shop(game, can_sell=True)
         if name == LAST_ROAD_FROM:
@@ -3362,13 +3510,13 @@ def arrive(game):
     play_music("到达")
     show_picture(CITY_ART, "绿")
     print(f"\n{date_text(game, last_day)}, {you(game)}到达了{DESTINATION}! 一共用了 {last_day} 天。")
-    write_diary(game, f"到达了{DESTINATION}! 政府收下了{everyone(game)}。", day=last_day)
+    write_diary(game, f"到达了{DESTINATION}! 政府收下了{'、'.join(game['party'])}。", day=last_day)
     print(f"活下来的人: {'、'.join(game['party'])}")
     if game["dead"]:
         print(f"路上失去的人: {'、'.join(game['dead'])}")
     if game["leader"] in game["dead"]:
         print(f"{game['leader']} 没能走到这里, 是同伴们替{game['leader']}走完了这条路。")
-    print(colored("城门口站着政府的士兵。原来, 俄勒冈城是美国政府的后备据点。", "黄"))
+    print(colored(f"城门口站着政府的士兵。原来, {DESTINATION}是美国政府的后备据点。", "黄"))
     print(f"那个消息是真的: 政府收下了{you(game)}。从明天起, {you(game)}就要在{DESTINATION}干活了。")
 
     if game["seeds"]:
@@ -3512,7 +3660,7 @@ def load_settings():
         settings["difficulty"] = saved["difficulty"]
     if saved.get("unit") in UNITS:
         settings["unit"] = saved["unit"]
-    for key in ["music", "animation"]:
+    for key in ["music", "animation", "window"]:
         if isinstance(saved.get(key), bool):
             settings[key] = saved[key]
 
@@ -3537,6 +3685,8 @@ def settings_menu():
         if not IN_BROWSER:
             items.append(("音乐", f"音乐: {on[settings['music']]}"))
         items.append(("动画", f"过场动画: {on[settings['animation']]} (关了以后, 赶路、过河这些动画不放, 画一下子画出来)"))
+        if not IN_BROWSER and not msvcrt:
+            items.append(("窗口", f"自动调整窗口大小: {on[settings['window']]} (一打开游戏, 把终端窗口调成正好放得下游戏)"))
         print("\n------ 设置 ------")
         for number, (_, words) in enumerate(items, 1):
             print(f"{number}. {words}")
@@ -3557,6 +3707,9 @@ def settings_menu():
                 play_music("主菜单")
             else:
                 stop_music()
+        elif what == "窗口":
+            settings["window"] = not settings["window"]
+            fit_window()
         else:
             settings["animation"] = not settings["animation"]
         save_settings()
@@ -4532,11 +4685,12 @@ def show_help():
 听说俄勒冈那边有官方的人在收人, 你开着捡来的车, 沿着当年拓荒者走过的俄勒冈小道,
 去 {TOTAL_DISTANCE} 公里 ({miles} 英里) 外的{DESTINATION}。只要还有人活着走到, 就算成功。
 
-难度在主菜单的「设置」里选 ({difficulties}): 越难, 一开始的钱越少, 路上出事、生病的机会越多。
+难度在主菜单的「设置」里选 ({difficulties}):
+越难, 一开始的钱越少, 路上出事、生病的机会越多。
 
 每天可以选一件事做:
   继续前进  开车赶路, 要用燃料。开得越快越费燃料, 人也越累。
-            车会像原版那样一直往前开, 路上出了事会说一声, 看完接着开; 到了地方就停下来。
+            车会像原版那样一直往前开, 出了事说一声, 看完接着开; 到了地方就停。
             想停下来休息、用药、看看情况, 就按回车 (网页版点一下屏幕)
   休息      躲在车里养伤养病, 不怕风吹雨打。一次最多 {MAX_REST_DAYS} 天, 出了事就停下来
   搜刮废墟  也许能找到物资, 也可能碰上危险
@@ -4567,12 +4721,16 @@ def show_help():
     new_screen()
     print(f"""
 走到{DESTINATION}才算分: 活下来的人越多、越健康分越高, 剩下的物资和钱也能换成分。
-最后再按难度乘一下: {scores}。主菜单的「最高分」里记着前 {HIGH_SCORES} 名。
+最后再按难度乘一下: {scores}。
+主菜单的「最高分」里记着前 {HIGH_SCORES} 名。
 
-主菜单的「设置」里还能换距离单位 (公里或英里)、关掉音乐和过场动画。网页版的音乐用右上角的「♪」开关。
+主菜单的「设置」里还能换距离单位 (公里或英里)、关掉音乐和过场动画。
+网页版的音乐用右上角的「♪」开关。
 
-在电脑的终端里玩, 窗口够大的时候 (拉大到 101 列、28 行以上), 每天的菜单和开车的画面
-会变成一个分成几块的大画面: 动画、状态、路线图、最近发生的事都在一起。网页版本来就有这些面板。
+在 Mac 的终端里玩, 游戏一打开会把窗口调成正好的大小 (设置里可以关掉),
+字太小就按 Command 和 +。窗口够大的时候, 每个画面都摆在窗口中间的方框里;
+每天的菜单和开车的画面是分成几块的大画面: 动画、状态、路线图、最近的事。
+网页版本来就有这些面板。
 """)
     wait_enter("按回车回到主菜单……")
 
@@ -4584,9 +4742,14 @@ def main():
     enable_ansi()   # 颜色和动画都要用控制字符, Windows 的终端要先打开这个开关
     screen["unread"] = False   # 刚打开游戏, 屏幕上还没有要看的字
     load_settings()
+    fit_window()
     while True:
         new_screen()
         play_music("主菜单")
+        columns, rows = screen_size()
+        if layout["on"] and (columns >= WINDOW_COLUMNS + 30 or rows >= WINDOW_ROWS + 12):   # 窗口比游戏大很多 (多半是全屏)
+            keys = "Command 和 +" if sys.platform == "darwin" else "Ctrl 和 +"
+            print(colored(f"窗口太大、字太小? 按 {keys} 把字放大。", "灰"))
         height = title_screen()
         saved = load_game()
         if saved:
@@ -4625,6 +4788,7 @@ def main():
         else:
             stop_music()
             print("\n下次再见!")
+            leave_layout()
             return
 
 
@@ -4647,7 +4811,7 @@ def play(game):
             ending = arrive(game)
             break
 
-        new_screen()   # 每天的菜单是一个画面: 上面是状态 (窗口够大就用大画面), 下面是选项
+        new_screen(framed=not use_dashboard())   # 每天的菜单是一个画面: 上面是状态 (窗口够大就用大画面), 下面是选项
         if GUI:
             show_scene(game)
         elif use_dashboard():
@@ -4682,4 +4846,5 @@ if __name__ == "__main__":
     try:
         main()
     except (EOFError, KeyboardInterrupt):
+        leave_layout()
         print("\n\n游戏中途退出了, 下次再见!")
