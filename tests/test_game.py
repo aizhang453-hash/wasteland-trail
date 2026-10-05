@@ -1980,20 +1980,52 @@ class GameTest(unittest.TestCase):
         self.assertEqual(screen.getvalue(), "\x1b[H\x1b[2J\x1b[3J")
 
     def test_fit_window(self):
-        """一打开游戏, 把终端窗口调成正好放得下游戏; 设置里关了、或者不在终端里就不调"""
-        with self.big_terminal(), mock.patch.object(w.time, "sleep", lambda seconds: None), \
-                redirect_stdout(io.StringIO()) as screen:
-            w.fit_window()
-        self.assertEqual(screen.getvalue(), f"\x1b[8;{w.WINDOW_ROWS};{w.WINDOW_COLUMNS}t")
-        with self.big_terminal((w.WINDOW_COLUMNS, w.WINDOW_ROWS)), redirect_stdout(io.StringIO()) as screen:
-            w.fit_window()   # 已经正好了
+        """一打开游戏, 窗口太小就调大到放得下游戏; 窗口够大 (比如全屏) 就不动; 设置里关了、或者不在终端里就不调"""
+        printed = []
+        for size in [(80, 24), (120, 24), (140, 45), (w.WINDOW_COLUMNS, w.WINDOW_ROWS)]:
+            with self.big_terminal(size), mock.patch.object(w.time, "sleep", lambda seconds: None), \
+                    redirect_stdout(io.StringIO()) as screen:
+                w.fit_window()
+            printed.append(screen.getvalue())
+        self.assertEqual(printed, [f"\x1b[8;{w.WINDOW_ROWS};{w.WINDOW_COLUMNS}t", f"\x1b[8;{w.WINDOW_ROWS};120t", "", ""])
         w.settings["window"] = False
-        with self.big_terminal(), redirect_stdout(io.StringIO()) as screen2:
+        with self.big_terminal((80, 24)), redirect_stdout(io.StringIO()) as screen2:
             w.fit_window()
         with redirect_stdout(io.StringIO()) as screen3:
             w.settings["window"] = True
             w.fit_window()   # 跑测试的时候不在终端里
-        self.assertEqual(screen.getvalue() + screen2.getvalue() + screen3.getvalue(), "")
+        self.assertEqual(screen2.getvalue() + screen3.getvalue(), "")
+
+    def test_redraw_when_the_window_changes(self):
+        """窗口大小变了 (拉大拉小窗口, 放大缩小字): 清屏, 按新的大小把方框摆到中间, 这个画面印过的字照原样再印一遍;
+        主菜单小动画的每一帧不用再画"""
+        size = [140, 45]
+        with mock.patch.multiple(w, can_read_keys=lambda: True, can_clear_screen=lambda: True,
+                                 screen_size=lambda: tuple(size), msvcrt=None), redirect_stdout(io.StringIO()) as screen:
+            w.clear_screen()
+            w.print("你好")
+            w.put("\x1b[3A小动画的一帧", log=False)
+            self.assertFalse(w.window_changed())
+            size[:] = [110, 35]   # 玩家按了 Command 和加号: 字变大, 一行放得下的字变少了
+            self.assertTrue(w.window_changed())
+            before = len(screen.getvalue())
+            w.refit_screen()
+            again = screen.getvalue()[before:]
+            self.assertFalse(w.window_changed())
+        left, top = (110 - w.DASHBOARD_WIDTH) // 2, (35 - 1 - w.FRAME_ROWS) // 2
+        self.assertTrue(again.startswith("\x1b[H\x1b[2J\x1b[3J"))
+        self.assertIn(f"\x1b[{top + 1};{left + 1}H+-- ", again)   # 方框挪到了新的中间
+        self.assertIn("你好", again)
+        self.assertNotIn("小动画", again)
+        self.assertEqual(w.screen["log"], ["你好\n"])
+
+    def test_screen_log_only_in_a_real_terminal(self):
+        """跑测试 (不在真正的终端里) 的时候不记印过的字, 不然一直玩下去会越记越多"""
+        with self.screens(), redirect_stdout(io.StringIO()):
+            w.clear_screen()
+            w.print("你好")
+        self.assertEqual(w.screen["log"], [])
+        self.assertFalse(w.window_changed())
 
     def test_leave_the_frame_when_quitting(self):
         """退出游戏: 光标挪到方框下面, 终端接下来的字不会写进方框里"""

@@ -42,7 +42,7 @@ SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settin
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v4.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v4.1.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -457,8 +457,8 @@ DASHBOARD_ROWS = 28       # 窗口至少要有几行才用大画面
 FRAME = True              # 不想要就改成 False
 FRAME_ROWS = 30           # 这一块最高几行 (窗口更高也只用这么多, 上下也摆在中间)
 FRAME_PAGE = 80           # 普通的画面一行最多写几格 (游戏的画面都是按 80 列的终端排的)
-# 一打开游戏, 先把终端窗口调成正好放得下这一块 (Mac 自带的终端、Linux 的大多数终端认得; 窗口全屏的时候调不了)。
-# 玩的人在主菜单的「设置」里可以关掉
+# 一打开游戏, 窗口太小 (放不下这一块) 就把终端窗口调大到这么大 (Mac 自带的终端、Linux 的大多数终端认得)。
+# 窗口比这个大就不动它 (玩的人可能开着全屏, 按 Command 和加号把字放大就能占满)。玩的人在主菜单的「设置」里可以关掉
 WINDOW_COLUMNS = DASHBOARD_WIDTH + 2
 WINDOW_ROWS = FRAME_ROWS + 1   # 最下面空一行, 退出游戏以后终端接着写字的时候不会盖到方框
 # 网页版的图形界面: 按钮、状态面板、地图、旅行日记都由网页来画, 游戏只要告诉网页现在的状态 (gui_update) 和在问什么。
@@ -524,13 +524,16 @@ HUNT_IN_BROWSER = False   # 网页认不认得打猎时的点击 (run_in_browser
 # 屏幕上的字: unread 是有没有玩家还没看过的新消息 (换画面前要先等玩家看完);
 # driving 是车是不是正在一直往前开 (这时候例行消息不印出来, 动画下面的状态栏都看得到);
 # room 是开车的时候, 动画 (或者大画面) 下面还有没有地方写路上发生的事; frame 是车开到动画的第几帧 (停下来以后画面接得上)
-screen = {"unread": False, "driving": False, "room": True, "frame": 0}
+# log 是清屏以后印过的字 (还没挪进方框的样子): 窗口大小变了, 就清屏按新的大小再印一遍 (见 refit_screen);
+# logging 是要不要记 (只在电脑真正的终端里记, 跑测试时不记); framed 是这个画面要不要方框
+screen = {"unread": False, "driving": False, "room": True, "frame": 0, "log": [], "logging": False, "framed": True}
 
 # 终端里的方框 (见 FRAME): on 是现在用不用; framed 是这个画面外面有没有方框 (大画面自己有方框, 不用再画);
 # left、top 是这一块的左上角在窗口里往右、往下挪了几格; height 是这一块有几行 (宽是 DASHBOARD_WIDTH);
 # column 是光标现在在这一行写到了第几格 (None 是不知道, 比如玩家刚打完字按了回车, 光标回到了窗口最左边);
-# saved 是控制字符 \x1b7 记住光标的时候, 光标在第几格
-layout = {"on": False, "framed": False, "left": 0, "top": 0, "height": FRAME_ROWS, "column": None, "saved": None}
+# saved 是控制字符 \x1b7 记住光标的时候, 光标在第几格; size 是清屏的时候窗口有多大 (列, 行), 变了就要重新画
+layout = {"on": False, "framed": False, "left": 0, "top": 0, "height": FRAME_ROWS, "column": None, "saved": None,
+          "size": None}
 LAYOUT_CODES = re.compile(r"(\x1b\[[\d;?]*[A-Za-z]|\x1b[78])")   # 控制字符: 光标怎么动、什么颜色……
 
 
@@ -623,9 +626,28 @@ def place_text(text):
     return "".join(out)
 
 
-def put(text, flush=False):
-    """原样印出来 (不加换行, 也不算新消息), 终端里用方框的时候挪进方框里。画面上的控制字符 (动画、开车的画面) 都用它印"""
+def put(text, flush=False, log=True):
+    """原样印出来 (不加换行, 也不算新消息), 终端里用方框的时候挪进方框里。画面上的控制字符 (动画、开车的画面) 都用它印。
+    log=False 是不用记下来 (窗口大小变了重新画的时候不用再画一遍, 比如主菜单的小动画每一帧)"""
+    if log and screen["logging"]:
+        screen["log"].append(text)
     builtins.print(place_text(text), end="", flush=flush)
+
+
+def window_changed():
+    """终端窗口的大小变了没有 (玩家拉大拉小了窗口, 或者放大缩小了字)。只在电脑真正的终端里看"""
+    return screen["logging"] and screen_size() != layout["size"]
+
+
+def refit_screen():
+    """窗口大小变了: 清屏, 按新的大小重新算方框摆在哪里, 再把这个画面清屏以后印过的字照原样印一遍"""
+    log = screen["log"]
+    screen["log"] = []
+    layout["size"] = screen_size()
+    builtins.print("\x1b[H\x1b[2J\x1b[3J" + start_layout(screen["framed"]), end="")
+    for text in log:
+        put(text)
+    builtins.print("", end="", flush=True)
 
 
 def ask_text(prompt):
@@ -644,13 +666,15 @@ def leave_layout():
 
 
 def fit_window():
-    """一打开游戏, 先把终端窗口调成正好放得下游戏 (\x1b[8;行;列t, Mac 自带的终端和 Linux 的大多数终端认得;
-    窗口全屏、或者终端不认得的时候, 什么都不会发生)。设置里关了就不调"""
+    """一打开游戏, 窗口太小放不下游戏, 就把终端窗口调大 (\x1b[8;行;列t, Mac 自带的终端和 Linux 的大多数终端认得;
+    终端不认得的时候, 什么都不会发生)。窗口够大就不动 (不会把全屏的窗口调小)。设置里关了就不调。
+    终端调窗口要一点时间: 调好以后, 等按键的时候发现窗口大小变了, 会按新的大小重新画 (见 refit_screen)"""
     if not (settings["window"] and FRAME and can_clear_screen() and can_read_keys()) or IN_BROWSER or GUI or msvcrt:
         return
-    if screen_size() == (WINDOW_COLUMNS, WINDOW_ROWS):
+    columns, rows = screen_size()
+    if columns >= WINDOW_COLUMNS and rows >= WINDOW_ROWS:
         return
-    builtins.print(f"\x1b[8;{WINDOW_ROWS};{WINDOW_COLUMNS}t", end="", flush=True)
+    builtins.print(f"\x1b[8;{max(rows, WINDOW_ROWS)};{max(columns, WINDOW_COLUMNS)}t", end="", flush=True)
     time.sleep(0.2)   # 等终端把窗口调好, 后面再量窗口多大
 
 
@@ -679,6 +703,8 @@ def can_clear_screen():
 def clear_screen(framed=True):
     """把屏幕清空, 光标回到左上角。\\x1b[H 是回到左上角, \\x1b[2J 是清屏, \\x1b[3J 是连往上翻才看得到的旧字也清掉。
     终端里用方框的时候, framed 是要不要画方框 (大画面自己有方框, 就不用)"""
+    screen.update(framed=framed, log=[], logging=can_read_keys() and not IN_BROWSER and not GUI)
+    layout["size"] = screen_size()
     builtins.print("\x1b[H\x1b[2J\x1b[3J" + start_layout(framed), end="", flush=True)
     screen["unread"] = False
 
@@ -711,6 +737,10 @@ def wait_enter(prompt="按回车继续……"):
         forget_keys()   # 这句话出来以前按的回车不算 (比如开车时按的), 不然画面一闪就过去了
         try:
             while True:
+                if not key_ready(0.25):   # 等按键的时候, 窗口大小变了就重新画
+                    if window_changed():
+                        refit_screen()
+                    continue
                 keys = read_keys()
                 if "\x03" in keys:                      # Ctrl+C
                     raise KeyboardInterrupt
@@ -816,8 +846,11 @@ def ask_number(prompt, low, high, idle=None):
 def read_number(low, high, idle=None):
     text = ""
     while True:
-        if idle and not key_ready(TITLE_ANIMATION_DELAY):   # 一会儿都没按键, 就先做别的事
-            idle()
+        if not key_ready(TITLE_ANIMATION_DELAY if idle else 0.25):   # 一会儿都没按键, 就先做别的事
+            if window_changed():   # 窗口大小变了, 按新的大小重新画
+                refit_screen()
+            if idle:
+                idle()
             continue
         for key in read_keys():
             if key == "\x03":                       # Ctrl+C
@@ -1758,8 +1791,8 @@ def drive_on(game):
                     screen["frame"] = frame
                     if can_animate():
                         rows, _, moving = drive_screen(game, frame, wide, parts)
-                        put("\x1b[?25l" + redraw(rows[:moving]), flush=True)
-                    if stop_pressed(ANIMATION_DELAY):
+                        put("\x1b[?25l" + redraw(rows[:moving]), flush=True, log=False)
+                    if stop_pressed(ANIMATION_DELAY) or window_changed():   # 窗口大小变了也停下来, 回到菜单按新的大小画
                         return
             # 这一天开完了: 动画 (大画面的话是整个方框) 留着, 擦掉下面的字, 路上发生的事写在下面 (像原版那样车还在画面上)
             rows, keep, _ = drive_screen(game, frame, wide, parts)
@@ -2269,7 +2302,10 @@ def hunt_game(game):
             hunting["left"] -= 1
             hunting["frame"] += 1
             if show:
-                put(redraw(hunt_rows(game, hunting)), flush=True)
+                if window_changed():   # 窗口大小变了: 按新的大小清屏 (下面每一帧本来就整个重画)
+                    clear_screen()
+                    put("\x1b[?25l", log=False)
+                put(redraw(hunt_rows(game, hunting)), flush=True, log=False)
                 time.sleep(HUNT_DELAY)
         if not hunting["over"]:
             hunting["message"] = "时间到了, 天快黑了。"
@@ -3686,7 +3722,7 @@ def settings_menu():
             items.append(("音乐", f"音乐: {on[settings['music']]}"))
         items.append(("动画", f"过场动画: {on[settings['animation']]} (关了以后, 赶路、过河这些动画不放, 画一下子画出来)"))
         if not IN_BROWSER and not msvcrt:
-            items.append(("窗口", f"自动调整窗口大小: {on[settings['window']]} (一打开游戏, 把终端窗口调成正好放得下游戏)"))
+            items.append(("窗口", f"自动调整窗口大小: {on[settings['window']]} (窗口太小的时候, 一打开游戏就把它调大)"))
         print("\n------ 设置 ------")
         for number, (_, words) in enumerate(items, 1):
             print(f"{number}. {words}")
@@ -4667,8 +4703,8 @@ def title_animation(lines_up):
     def next_frame():
         counter[0] = (counter[0] + 1) % TITLE_FRAMES
         # 记住光标的位置 (\x1b7), 藏起光标, 往上移到画面的第一行, 一行一行盖掉, 再回到原来的位置 (\x1b8), 显示光标
-        print("\x1b7\x1b[?25l" + f"\x1b[{lines_up}A\r" + "\n".join(frames[counter[0]]) + "\x1b8\x1b[?25h",
-              end="", flush=True)
+        put("\x1b7\x1b[?25l" + f"\x1b[{lines_up}A\r" + "\n".join(frames[counter[0]]) + "\x1b8\x1b[?25h",
+            flush=True, log=False)
     return next_frame
 
 
@@ -4727,8 +4763,8 @@ def show_help():
 主菜单的「设置」里还能换距离单位 (公里或英里)、关掉音乐和过场动画。
 网页版的音乐用右上角的「♪」开关。
 
-在 Mac 的终端里玩, 游戏一打开会把窗口调成正好的大小 (设置里可以关掉),
-字太小就按 Command 和 +。窗口够大的时候, 每个画面都摆在窗口中间的方框里;
+在 Mac 的终端里玩, 窗口太小时游戏一打开会把它调大 (设置里可以关掉);
+字太小就按 Command 和加号键。窗口够大的时候, 每个画面都摆在窗口中间的方框里;
 每天的菜单和开车的画面是分成几块的大画面: 动画、状态、路线图、最近的事。
 网页版本来就有这些面板。
 """)
@@ -4748,8 +4784,9 @@ def main():
         play_music("主菜单")
         columns, rows = screen_size()
         if layout["on"] and (columns >= WINDOW_COLUMNS + 30 or rows >= WINDOW_ROWS + 12):   # 窗口比游戏大很多 (多半是全屏)
-            keys = "Command 和 +" if sys.platform == "darwin" else "Ctrl 和 +"
-            print(colored(f"窗口太大、字太小? 按 {keys} 把字放大。", "灰"))
+            keys = "Command" if sys.platform == "darwin" else "Ctrl"
+            print(colored(f"字太小? 按住 {keys} 键, 再按几下加号键 (+), 字会变大, 方框跟着变大;", "灰"))
+            print(colored(f"方框快占满窗口就行。放过头了就按 {keys} 和减号键 (-)。", "灰"))
         height = title_screen()
         saved = load_game()
         if saved:
