@@ -38,11 +38,12 @@ except ImportError:
 # 存档文件和最高分榜, 都放在游戏文件旁边
 SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
 HIGH_SCORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "highscores.json")
+ACHIEVEMENT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "achievements.json")   # 拿到过的成就
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")   # 主菜单「设置」里改的
 
 # ========== 游戏设置(数字都可以随便改) ==========
 
-VERSION = "v4.1.1"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
+VERSION = "v4.2"   # 版本号, 显示在开始界面上。发布新版本时要跟着改
 
 # 路线是当年的俄勒冈小道: 从密苏里州独立城到俄勒冈城。
 # 距离按 1847 年乔尔·帕尔默的拓荒指南里的路程表算 (经过布里杰堡的那条线)
@@ -143,6 +144,17 @@ FERRY_WAIT = 2          # 坐渡船最多要排几天队
 
 # 当年的拓荒者到了达尔斯, 要么扎木筏顺着哥伦比亚河漂下去, 要么交过路费走绕过胡德山的巴洛路
 LAST_ROAD_FROM = "达尔斯"
+
+# ---------- 萨布莱特捷径 ----------
+
+# 1844 年开通的真实近路: 过了南山口可以选, 一路往西直奔格林河, 再翻山回到大路上, 整个绕开布里杰堡
+# (那里的商店和愿意跟你走的人都见不到了)。一共少走大约 85 英里 (137 公里), 可是到格林河以前有大约 45 英里 (72 公里) 找不到水
+CUTOFF_FROM = "南山口"
+CUTOFF_SKIPS = "布里杰堡"
+CUTOFF_DRY_UNTIL = "格林河"   # 从南山口到这里, 路边一点水都找不到
+CUTOFF_SAVES = 137            # 少走几公里 (开到布里杰堡那么远的时候, 一下子算进去: 翻过山回到了大路上)
+CUTOFF_DRY = 72               # 找不到水的路有多长 (公里, 只在说明里用)
+DRY_WATER = 2                 # 走在找不到水的路上, 每人每天多喝几份水 (又干又晒)
 BARLOW_TOLL = 10        # 巴洛路的过路费 (1846 年是每辆马车 5 美元)
 RAPIDS = 4              # 坐木筏一路上要过几段急流 (要漂两天, 每天两段)
 RAPID_SECONDS = 5       # 看到急流以后, 几秒内选对方向才算躲开; 慢了就看运气
@@ -158,6 +170,23 @@ SCORE_SUPPLIES = {"食物": (25, 1), "水": (25, 1), "燃料": (5, 1), "子弹":
 SCORE_MONEY = 5         # 每剩几块钱算 1 分
 SCORE_SEEDS = 1000      # 把种子库的种子带到终点 (隐藏结局), 再加这么多分
 HIGH_SCORES = 10        # 最高分榜记几名
+# 成就: 名字 -> 怎么拿到 (写给玩家看的, 什么时候算拿到写在 unlock 用到的地方)。拿到过的记在 ACHIEVEMENT_FILE 里, 一直留着
+ACHIEVEMENTS = {
+    "终于到了": "第一次走到俄勒冈城",
+    "一个都不少": "带上的人全都活着到了 (完美结局)",
+    "独行侠": "从头到尾一个人走完全程 (独行结局)",
+    "绿色的希望": "把种子库的种子带到终点 (隐藏结局)",
+    "硬骨头": "在困难难度下走到俄勒冈城",
+    "快马加鞭": "40 天以内走到俄勒冈城",
+    "自己过河": "一次渡船都不坐, 走到俄勒冈城",
+    "抄近路": "走萨布莱特捷径, 走到俄勒冈城",
+    "满员": "车上坐满 4 个人",
+    "远离辐射": "三段辐射热点都绕过去",
+    "神枪手": "一次打猎打到 3 只以上",
+    "激流勇进": "坐木筏过 4 段急流, 一次礁石都没撞上",
+    "前车之鉴": "第一次全军覆没",
+}
+FAST_ARRIVAL_DAYS = 40   # 「快马加鞭」: 几天以内走到
 
 # 商店价格(每个多少钱)
 PRICES = {"食物": 1, "水": 1, "燃料": 4, "子弹": 1, "零件": 20, "药品": 15, "冬衣": 10, "排辐剂": 20}
@@ -375,6 +404,10 @@ HOTSPOTS = [
     (2720, 2861, "汉福德核基地下游", 6, 2, "哥伦比亚河上游是汉福德核基地, 当年美国造原子弹用的钚就是在那里造出来的。"),
 ]
 HOTSPOT_WARNING = 350  # 离下一个辐射热点还有多远时, 状态栏开始提醒 (公里)
+# 开到辐射热点跟前可以选: 直接开过去 (快, 可是在那一带每天都要多受辐射), 还是绕路 (那一带的辐射就不用受了)。
+# 绕路要多开这么多公里: 中速大约多花 1 天 (慢速 2 天), 多吃多喝, 也多用燃料。
+# 试过 220 公里 (大约 2 天): 三段都绕的老手到达率从 95% 掉到 72%, 太亏了, 没人会选
+DETOUR_KM = 100
 
 # ---------- 生病和受伤 ----------
 
@@ -1101,7 +1134,7 @@ def irradiate(game, name, amount):
 def hotspot_here(game):
     """现在是不是在辐射热点里: 是的话返回 HOTSPOTS 里的那一行, 不是就返回 None"""
     for spot in HOTSPOTS:
-        if spot[0] <= game["distance"] < spot[1]:
+        if spot[0] <= game["distance"] < spot[1] and spot[2] not in game["avoided"]:   # 绕开了的不算
             return spot
     return None
 
@@ -1317,6 +1350,11 @@ def new_game():
         "here": START_PLACE,   # 车现在停在哪个地方 (刚到的地标、据点、河、辐射热点); 车一开走就是 None
         "short": [],        # 昨天不够的东西 ("食物"、"水"): 头一天不够要专门说, 接着不够就只是例行消息
         "talk": [None, 0],  # 和人说话: [在哪个地方, 在那里已经听了几次] (每次换一个人、说一件事)
+        "avoided": [],      # 绕开了的辐射热点 (那一带的辐射不用受)
+        "detour": 0,        # 绕路还要多开几公里 (开完了路程才接着往前算)
+        "cutoff": 0,        # 萨布莱特捷径: 0 是没走, 1 是正在走, 2 是走完了 (回到了大路上)
+        "ferries": 0,       # 坐了几次渡船 (成就「自己过河」用)
+        "rocks": 0,         # 坐木筏撞了几次礁石 (成就「激流勇进」用)
     }
 
 
@@ -1484,7 +1522,7 @@ def sell(game):
 
 def show_status(game):
     s = game["supplies"]
-    left = TOTAL_DISTANCE - game["distance"]
+    left = road_left(game, TOTAL_DISTANCE)
     print(colored(f"\n==== {date_text(game)} (第 {game['day']} 天) | 已走 {show_distance(game, game['distance'])}"
                   f" | 还剩 {show_distance(game, left)} ====", "青", bold=True))
     percent = game["distance"] * 100 // TOTAL_DISTANCE
@@ -1515,7 +1553,7 @@ def show_status(game):
         note = " (要过河)"
     else:
         note = ""
-    print(f"下一站: {name}{note}, 还有 {show_distance(game, km - game['distance'])}")
+    print(f"下一站: {name}{note}, 还有 {show_distance(game, road_left(game, km))}")
     short = fuel_short(game)
     if out_of_fuel(game):
         print(colored("注意: 没燃料了, 车开不动。去搜刮废墟会专门到废车里抽油, 也可以找人交易", "红"))
@@ -1527,8 +1565,12 @@ def show_status(game):
         print(colored(f"辐射热点: 正在{spot[2]}, 还要开 {show_distance(game, spot[1] - game['distance'])}才能离开", "紫"))
         print(colored(f"          在外面每天受 {spot[3]} 点辐射, 躲在车里 {spot[4]} 点", "紫"))
     elif ahead and ahead[0] - game["distance"] <= HOTSPOT_WARNING:
-        print(colored(f"辐射热点: 再开 {show_distance(game, ahead[0] - game['distance'])}就到{ahead[2]}, "
+        print(colored(f"辐射热点: 再开 {show_distance(game, road_left(game, ahead[0]))}就到{ahead[2]}, "
                       f"那一带辐射偏高", "紫"))
+    if game["detour"]:
+        print(colored(f"绕路: 还要多开 {show_distance(game, game['detour'])}, 路程才接着往前算", "紫"))
+    if on_dry_road(game):
+        print(colored(f"捷径: 到{CUTOFF_DRY_UNTIL}以前找不到水, 每人每天多喝 {DRY_WATER} 份", "黄"))
     if game["seeds"]:
         print("车上带着: 种子库的种子")
 
@@ -1608,7 +1650,7 @@ def show_party(game):
         clothes += f", 天冷时有 {people - s['冬衣']} 个人没冬衣穿"
     print(clothes)
     print(f"药品 {s['药品']}  排辐剂 {s['排辐剂']}  零件 {s['零件']}  子弹 {s['子弹']}  钱 {game['money']}")
-    print(f"离{DESTINATION}还有 {show_distance(game, TOTAL_DISTANCE - game['distance'])}")
+    print(f"离{DESTINATION}还有 {show_distance(game, road_left(game, TOTAL_DISTANCE))}")
 
     print("\n---------- 车上的重量 ----------")
     people_weight = people * PERSON_WEIGHT
@@ -1626,7 +1668,8 @@ def daily_need(game):
     """按现在的口粮、速度, 每天大概要用多少食物、水、燃料 (有人得霍乱要多喝水; 天冷天热另外还要多一些, 这里不算)"""
     cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
     people = len(game["party"])
-    return {"食物": people * RATIONS[game["ration"]][1], "水": people + cholera * CHOLERA_WATER,
+    dry = people * DRY_WATER if on_dry_road(game) else 0   # 捷径上找不到水的那一段, 每人多喝一些
+    return {"食物": people * RATIONS[game["ration"]][1], "水": people + cholera * CHOLERA_WATER + dry,
             "燃料": PACES[game["pace"]][2]}
 
 
@@ -1664,6 +1707,8 @@ def pass_day(game, health_bonus=0, indoors=False, traveling=False):
 
     cholera = sum(disease == "霍乱" for disease, _ in game["sick"].values())
     water_need = people * (1 + extra_water) + cholera * CHOLERA_WATER
+    if on_dry_road(game):   # 萨布莱特捷径上找不到水的那一段: 又干又晒, 每人多喝一些
+        water_need += people * DRY_WATER
     dirty_water = s["水"] < water_need
     if not dirty_water:
         s["水"] -= water_need
@@ -1714,13 +1759,32 @@ def out_of_fuel(game):
     return game["supplies"]["燃料"] < PACES[game["pace"]][2]
 
 
+def place_km(name):
+    """路上的一个地方 (地标或者据点) 离起点几公里"""
+    return next(km for km, (place, _) in list(LANDMARKS.items()) + list(OUTPOSTS.items()) if place == name)
+
+
+def road_left(game, km):
+    """从现在的地方开到路上第 km 公里的地方, 还要真的开多少公里: 还没绕完的路要加上, 走捷径少走的要减掉"""
+    left = max(0, km - game["distance"]) + game["detour"]
+    if game["cutoff"] == 1 and km > place_km(CUTOFF_SKIPS):
+        left = max(0, left - CUTOFF_SAVES)
+    return left
+
+
+def on_dry_road(game):
+    """是不是走在萨布莱特捷径上找不到水的那一段 (南山口到格林河)"""
+    return game["cutoff"] == 1 and game["distance"] < place_km(CUTOFF_DRY_UNTIL)
+
+
 def next_supply_stop(game):
     """下一个能补给的地方: 下一个据点, 后面没有据点了就是终点。返回 (地方, 还有几公里, 照现在的速度大约开几天, 大约要几份燃料)。
     没算坏天气开得慢 (那样用得更多), 所以只是个大概"""
-    ahead = [(km, name) for km, (name, _) in sorted(OUTPOSTS.items()) if km > game["distance"]]
+    ahead = [(km, name) for km, (name, _) in sorted(OUTPOSTS.items())
+             if km > game["distance"] and name not in game["visited"]]   # 走捷径的话, 布里杰堡不经过
     km, name = ahead[0] if ahead else (TOTAL_DISTANCE, DESTINATION)
     _, per_day, fuel, _ = PACES[game["pace"]]
-    left = max(0, km - game["distance"])
+    left = road_left(game, km)
     days = -(-left // per_day)   # 往上取整
     return name, left, days, days * fuel
 
@@ -1752,14 +1816,23 @@ def drive_one_day(game, animate=True):
         drive_animation(game)
     km = round((km + random.randint(-10, 10)) * speed)
     km = min(km, TOTAL_DISTANCE - game["distance"])   # 最后一段路不多算
+    driven = km
+    around = min(km, game["detour"])   # 还在绕开辐射热点: 先开完绕的那段路, 路程不往前算
+    game["detour"] -= around
+    km -= around
     game["distance"] += km
-    if speed < 1:
+    if around:
+        left = f", 还要再绕 {show_distance(game, game['detour'])}" if game["detour"] else ", 绕过去了"
+        print_routine(f"\n绕路开了 {show_distance(game, around)}{left}。")
+    elif speed < 1:
         print_routine(f"\n{weather}里车开不快, 只往前开了 {show_distance(game, km)}。")
     else:
         print_routine(f"\n车往前开了 {show_distance(game, km)}。")
+    if game["cutoff"] == 1 and game["distance"] >= place_km(CUTOFF_SKIPS):
+        finish_cutoff(game)
     check_places(game)
     if game["distance"] < TOTAL_DISTANCE:   # 已经到了终点 (比如坐木筏漂到了), 就不会再遇到路上的事
-        random_event(game, km)
+        random_event(game, driven)
     pass_day(game, pace_health, traveling=True)   # 一天结束: 吃喝、更新健康、换成明天的天气
 
 
@@ -1883,16 +1956,20 @@ def drive_status(game):
     lines.append("  ".join(supplies))
 
     name, km = next_place(game)
-    lines.append(f"下一站: {name}, 还有 {show_distance(game, km - game['distance'])}")
+    lines.append(f"下一站: {name}, 还有 {show_distance(game, road_left(game, km))}")
     percent = game["distance"] * 100 // TOTAL_DISTANCE
     lines.append(f"已走 {show_distance(game, game['distance'])}, 还剩 "
-                 f"{show_distance(game, TOTAL_DISTANCE - game['distance'])}  "
+                 f"{show_distance(game, road_left(game, TOTAL_DISTANCE))}  "
                  f"{colored(progress_bar(game['distance'], TOTAL_DISTANCE, 10), '青')} {percent}%")
 
     # 天天都有、开车的时候不会专门说的事: 放在最后一行提醒
     notes = []
     if hotspot_here(game):
         notes.append(colored("辐射偏高", "紫"))
+    if game["detour"]:
+        notes.append(colored("在绕路", "紫"))
+    if on_dry_road(game):
+        notes.append(colored("找不到水", "黄"))
     if s["食物"] == 0:
         notes.append(colored("没吃的了", "红"))
     if s["水"] == 0:
@@ -2042,7 +2119,7 @@ def status_panel(game, car):
     weather = game["weather"]
     temperature = game["temperature"]
     people = len(game["party"])
-    left = TOTAL_DISTANCE - game["distance"]
+    left = road_left(game, TOTAL_DISTANCE)
     name, km = next_place(game)
     kind = " (据点)" if name in OUTPOST_NAMES else " (要过河)" if name in RIVERS else ""
     rows = [
@@ -2051,7 +2128,7 @@ def status_panel(game, car):
         f"{colored(temperature_level(temperature)[1], temperature_color(temperature))}",
         "",
         f" 下一站: {name}{kind}",
-        f"   还有 {show_distance(game, km - game['distance'])}",
+        f"   还有 {show_distance(game, road_left(game, km))}",
         f" 已走 {show_distance(game, game['distance'])}, 还剩 {show_distance(game, left)}",
         "",
     ]
@@ -2081,7 +2158,11 @@ def status_panel(game, car):
     if spot:
         notes.append(colored("辐射偏高", "紫"))
     elif ahead and ahead[0] - game["distance"] <= HOTSPOT_WARNING:
-        notes.append(colored(f"{show_distance(game, ahead[0] - game['distance'])}后辐射偏高", "紫"))
+        notes.append(colored(f"{show_distance(game, road_left(game, ahead[0]))}后辐射偏高", "紫"))
+    if game["detour"]:
+        notes.append(colored(f"绕路还要 {show_distance(game, game['detour'])}", "紫"))
+    if on_dry_road(game):
+        notes.append(colored("找不到水", "黄"))
     if s["食物"] == 0:
         notes.append(colored("没吃的", "红"))
     if s["水"] == 0:
@@ -2256,6 +2337,8 @@ def hunt(game):
             print(f"猎人{hunter}帮忙收拾猎物, 肉多了一半, 有 {food} 份。")
         brought = carry_meat(game, food)
         write_diary(game, f"打猎打到{names}, 带回 {brought} 份食物。")
+        if len(bag) >= 3:
+            unlock("神枪手")
     pass_day(game)
 
 
@@ -2693,7 +2776,7 @@ def talk_river(game):
             depth = round(usual_depth(game, place), 1)   # 只是大概 (不掷骰子: 同一天问几次都一样, 也不影响别的随机事)
             wade = "车直接开得过去" if depth <= wade_depth(game) else "车直接开过去, 发动机怕是要进水"
             ferry = f"河边有人摆渡, 收 {fare} 块钱" if fare else "那里没有渡船, 只能自己想办法过"
-            return (f"再往西 {show_distance(game, km - game['distance'])}就是{river}。"
+            return (f"再往西 {show_distance(game, road_left(game, km))}就是{river}。"
                     f"这几天水大概有 {show_length(game, depth)}深, {wade}。{ferry}。")
     return None
 
@@ -2734,8 +2817,8 @@ def talk_hotspot(game):
                 "能少在外面待就少待, 开快一点也能少受些辐射。")
     spot = next_hotspot(game)
     if spot:
-        return (f"再往西 {show_distance(game, spot[0] - game['distance'])}就到{spot[2]}了, 那一带辐射偏高。"
-                "排辐剂带上几支, 到了那里别在外面磨蹭。")
+        return (f"再往西 {show_distance(game, road_left(game, spot[0]))}就到{spot[2]}了, 那一带辐射偏高。"
+                f"排辐剂带上几支, 到了那里别在外面磨蹭; 也可以绕过去, 要多开大约 {show_distance(game, DETOUR_KM)}。")
     return None
 
 
@@ -2747,7 +2830,15 @@ def talk_last_road(game):
             f"或者交 {BARLOW_TOLL} 块钱过路费, 开车走绕过胡德山的巴洛路。")
 
 
-TALK_TOPICS = [talk_river, talk_weather, talk_supplies, talk_hotspot, talk_last_road]
+def talk_cutoff(game):
+    """到南山口以前: 过了南山口有一条近路"""
+    if game["distance"] >= place_km(CUTOFF_FROM):
+        return None
+    return (f"过了{CUTOFF_FROM}, 有一条近路叫萨布莱特捷径, 能少走大约 {show_distance(game, CUTOFF_SAVES)}。"
+            f"可是到{CUTOFF_DRY_UNTIL}以前有大约 {show_distance(game, CUTOFF_DRY)}找不到水, 也路过不了{CUTOFF_SKIPS}。")
+
+
+TALK_TOPICS = [talk_river, talk_weather, talk_supplies, talk_hotspot, talk_cutoff, talk_last_road]
 
 
 def make_room(game, name):
@@ -2864,7 +2955,7 @@ def next_place(game):
     places += [(km, name) for km, (name, _) in OUTPOSTS.items()]
     places.append((TOTAL_DISTANCE, DESTINATION))
     for km, name in sorted(places):
-        if km > game["distance"]:
+        if km > game["distance"] and name not in game["visited"]:   # 走捷径的话, 布里杰堡不经过
             return name, km
     return DESTINATION, TOTAL_DISTANCE
 
@@ -2893,8 +2984,8 @@ def check_places(game):
         if kind == "热点":
             play_music("热点")
             show_picture(HOTSPOT_SIGN, "紫")
-            print(f"\n{you(game)}开进了{title(name, '紫')}{intro}{colored('盖革计数器响个不停, 这一带辐射偏高。', '紫')}")
-            write_diary(game, f"开进了{name}, 这一带辐射偏高。", km)
+            print(f"\n{you(game)}开到了{title(name, '紫')}{intro}{colored('盖革计数器响个不停, 这一带辐射偏高。', '紫')}")
+            choose_hotspot_road(game, name, km)
             continue
         if name in RIVERS:
             print(f"\n{you(game)}来到了{title(name, '青')}{intro}")
@@ -2906,6 +2997,8 @@ def check_places(game):
         if kind == "地标":
             print(f"\n{you(game)}经过了{title(name, '青')}{intro}")
             write_diary(game, f"经过了{name}。", km)
+            if name == CUTOFF_FROM:
+                choose_cutoff(game, km)
             continue
         play_music("据点")
         print(f"\n{you(game)}到了{title(name, '青')}{intro}")
@@ -2924,6 +3017,53 @@ def check_places(game):
             shop(game, can_sell=True)
         if name == LAST_ROAD_FROM:
             choose_last_road(game, km)
+
+
+def choose_hotspot_road(game, name, km):
+    """开到辐射热点跟前: 直接开过去 (快, 可是在那一带每天都要多受辐射), 还是绕路 (多开 DETOUR_KM 公里, 不受那里的辐射)"""
+    start, end, _, outdoor, indoor, _ = next(spot for spot in HOTSPOTS if spot[2] == name)
+    _, per_day, fuel, _ = PACES[game["pace"]]
+    days = -(-DETOUR_KM // per_day)   # 往上取整
+    print(f"1. 直接开过去: 大约 {show_distance(game, end - start)}, 在这一带每天多受 {outdoor} 点辐射 (躲在车里 {indoor} 点)")
+    print(f"2. 绕路: 多开大约 {show_distance(game, DETOUR_KM)}, 照现在的速度多花 {days} 天、{days * fuel} 份燃料,")
+    print("         这一带的辐射就不用受了")
+    day_end = game["distance"]
+    game["distance"] = km   # 车先停在热点跟前选 (像过河一样, 状态栏写的也是这里)
+    if ask_number("怎么过这一带? ", 1, 2) == 1:
+        game["distance"] = day_end   # 直接开过去: 接着开完今天的路
+        write_diary(game, f"开进了{name}, 这一带辐射偏高。", km)
+        return
+    game["avoided"].append(name)
+    over = day_end - km   # 今天本来还要往热点里开这么远: 这一段改成在绕路 (不然今天就会开到热点里面的地方)
+    game["distance"] = km + max(0, over - DETOUR_KM)
+    game["detour"] += max(0, DETOUR_KM - over)
+    print(f"{you(game)}掉转车头, 找了一条离{name}远一点的路。")
+    write_diary(game, f"绕开了{name}, 要多开大约 {show_distance(game, DETOUR_KM)}。", km)
+    if len(game["avoided"]) == len(HOTSPOTS):
+        unlock("远离辐射")
+
+
+def choose_cutoff(game, km):
+    """到了南山口: 照大路走, 经过布里杰堡; 还是走萨布莱特捷径 (少走一段路, 可是有一段找不到水, 也不经过布里杰堡)"""
+    print(f"\n过了{CUTOFF_FROM}, 前面有两条路:")
+    print(f"1. 走大路, 经过{CUTOFF_SKIPS} (能买卖东西, 那里还有人愿意跟你走)")
+    print(f"2. 走萨布莱特捷径 (1844 年开出来的近路): 少走大约 {show_distance(game, CUTOFF_SAVES)},")
+    print(f"   可是到{CUTOFF_DRY_UNTIL}以前有大约 {show_distance(game, CUTOFF_DRY)}找不到水 (每人每天多喝 {DRY_WATER} 份),"
+          f" 也不经过{CUTOFF_SKIPS}")
+    if ask_number("走大路还是走捷径? ", 1, 2) == 1:
+        return
+    game["cutoff"] = 1
+    game["visited"].append(CUTOFF_SKIPS)   # 不经过布里杰堡: 到了那么远也不会停下来
+    print(f"{you(game)}拐上了捷径。前面是一片干巴巴的荒原, 水要省着喝。")
+    write_diary(game, f"在{CUTOFF_FROM}拐上了萨布莱特捷径。", km)
+
+
+def finish_cutoff(game):
+    """捷径走到头了: 翻过山, 回到了大路上 (一下子少走 CUTOFF_SAVES 公里)"""
+    game["cutoff"] = 2
+    game["distance"] = min(TOTAL_DISTANCE, game["distance"] + CUTOFF_SAVES)
+    print(f"\n{you(game)}翻过山, 走完了萨布莱特捷径, 回到了大路上, 少走了大约 {show_distance(game, CUTOFF_SAVES)}。")
+    write_diary(game, f"走完了萨布莱特捷径, 回到大路上, 少走了大约 {show_distance(game, CUTOFF_SAVES)}。")
 
 
 def offer_recruit(game, place, km=None):
@@ -2952,6 +3092,8 @@ def offer_recruit(game, place, km=None):
         for item, amount in RECRUIT_BRINGS.items():
             add_supplies(game, item, amount)
         write_diary(game, f"{job}{name}在{place}加入了队伍。", km)
+        if len(game["party"]) >= MAX_PARTY:
+            unlock("满员")
     else:
         print(f"{name} 点点头, 留在了{place}。")
 
@@ -3057,6 +3199,7 @@ def take_ferry(game, place):
     """花钱坐渡船: 最安全, 可是渡口常常排着队"""
     river, _, _, fare = RIVERS[place]
     game["money"] -= fare
+    game["ferries"] += 1
     wait = random.randint(0, FERRY_WAIT)
     if wait:
         print(f"\n渡口排着好几辆车, {you(game)}等了 {wait} 天才轮到。")
@@ -3147,6 +3290,8 @@ def raft_trip(game, km):
     game["distance"] = TOTAL_DISTANCE
     print(f"\n木筏漂出了峡谷, 河面越来越宽。{you(game)}从威拉米特河口上了岸, 把车开到了{DESTINATION}!")
     write_diary(game, f"坐木筏顺着哥伦比亚河漂到了{DESTINATION}。")
+    if not game["rocks"]:
+        unlock("激流勇进")
 
 
 # 急流的画面: 每一条水道 8 格宽, 有礁石和没礁石各画两行 (画里只用英文字符, 中文字在终端里占两格, 会对不齐)
@@ -3185,6 +3330,7 @@ def shoot_rapid(game, number):
 
 def hit_rock(game):
     """木筏撞上礁石: 一些东西掉进河里, 有人受伤, 还可能有人被冲走"""
+    game["rocks"] += 1
     s = game["supplies"]
     lost = []
     for item in random.sample([item for item in s if s[item]], min(2, sum(1 for item in s if s[item]))):
@@ -3345,6 +3491,8 @@ def stranger(game):
         game["party"][name] = random.randint(60, 90)
         print(f"{name} 加入了队伍!")
         write_diary(game, f"路上遇到的 {name} 加入了队伍。")
+        if len(game["party"]) >= MAX_PARTY:
+            unlock("满员")
 
 
 def minefield(game):
@@ -3610,6 +3758,68 @@ def score_of(game):
         total = total * percent // 100
         lines.append(f"{name}难度: 得分 ×{percent / 100:g}")
     return total, lines
+
+
+def load_achievements():
+    """读拿到过的成就: 名字的列表 (按拿到的先后)。没有文件或者文件坏了, 就当一个都没拿到"""
+    try:
+        with open(ACHIEVEMENT_FILE, encoding="utf-8") as f:
+            got = json.load(f)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(got, list):
+        return []
+    return [name for name in got if name in ACHIEVEMENTS]
+
+
+def save_achievements(got):
+    try:
+        with open(ACHIEVEMENT_FILE, "w", encoding="utf-8") as f:
+            json.dump(got, f, ensure_ascii=False)
+    except OSError:
+        print("成就没能存下来, 可能是文件夹不能写入。")
+
+
+def unlock(name, quiet=False):
+    """拿到一个成就: 以前没拿到过的就记下来, 告诉玩家 (quiet=True 先不说)。返回是不是这次新拿到的"""
+    got = load_achievements()
+    if name in got:
+        return False
+    save_achievements(got + [name])
+    if not quiet:
+        print(colored(f"★ 新成就: {name} —— {ACHIEVEMENTS[name]}", "黄", bold=True))
+    return True
+
+
+def arrival_achievements(game, ending):
+    """走到俄勒冈城以后: 看看这一局拿到了哪些成就, 新拿到的写出来"""
+    checks = {
+        "终于到了": True,
+        "一个都不少": ending == "完美结局",
+        "独行侠": ending == "独行结局",
+        "绿色的希望": ending == "隐藏结局",
+        "硬骨头": game["difficulty"] == 3,
+        "快马加鞭": game["day"] - 1 <= FAST_ARRIVAL_DAYS,
+        "自己过河": not game["ferries"],
+        "抄近路": game["cutoff"] == 2,
+    }
+    new = [name for name, ok in checks.items() if ok and unlock(name, quiet=True)]
+    if new:
+        print("\n========== 新成就 ==========")
+        for name in new:
+            print(colored(f"★ {name} —— {ACHIEVEMENTS[name]}", "黄", bold=True))
+    return new
+
+
+def show_achievements():
+    """主菜单里的「最高分和成就」的第二页: 一共有哪些成就, 拿到了哪些"""
+    got = load_achievements()
+    print(f"\n========== 成就 (拿到了 {len(got)} 个, 一共 {len(ACHIEVEMENTS)} 个) ==========")
+    for name, how in ACHIEVEMENTS.items():
+        if name in got:
+            print(colored(f"★ {name}", "黄", bold=True) + f": {how}")
+        else:
+            print(colored(f"☆ {name}: {how}", "灰"))
 
 
 def load_high_scores():
@@ -4744,7 +4954,10 @@ def show_help():
   - 没燃料了就去搜刮废墟, 会专门到废车里抽油。停在据点时, 随时能买卖东西
   - 天气按走到哪里、几月份变。坏天气车开得慢, 酸雨和辐射风暴天最好躲在车里
   - 辐射会在身体里越积越多, 只有排辐剂能排掉
-  - 有 {len(HOTSPOTS)} 段路靠近核设施, 辐射偏高 (状态栏会提前提醒), 开快点、躲在车里能少受些
+  - 有 {len(HOTSPOTS)} 段路靠近核设施, 辐射偏高 (状态栏会提前提醒), 开快点、躲在车里能少受些;
+    开到跟前也可以绕路, 多开一天左右, 那一带的辐射就不用受了
+  - 过了{CUTOFF_FROM}可以走萨布莱特捷径: 少走一段路, 可是有一段找不到水,
+    也不经过{CUTOFF_SKIPS}
   - 健康越差越容易生病。生病了要休息, 或者用药品治
   - 路上要过 5 条大河: 水浅就直接开过去, 水深就绑上空油桶浮过去 (可能翻车),
     有的河边有渡船, 花钱最安全。化雪、下雨以后河水会涨, 等几天也许会退
@@ -4758,7 +4971,7 @@ def show_help():
     print(f"""
 走到{DESTINATION}才算分: 活下来的人越多、越健康分越高, 剩下的物资和钱也能换成分。
 最后再按难度乘一下: {scores}。
-主菜单的「最高分」里记着前 {HIGH_SCORES} 名。
+主菜单的「最高分和成就」里记着前 {HIGH_SCORES} 名, 还有 {len(ACHIEVEMENTS)} 个成就, 看看你拿到了几个。
 
 主菜单的「设置」里还能换距离单位 (公里或英里)、关掉音乐和过场动画。
 网页版的音乐用右上角的「♪」开关。
@@ -4795,7 +5008,7 @@ def main():
         else:
             note = "没有存档"
         # 后面几个短的排成一行: 开始画面在 80x24 的终端里正好放得下, 还能播小动画
-        menu = f"\n1. 开始新游戏\n2. 继续游戏 ({note})\n3. 游戏说明  4. 最高分  5. 设置  6. 退出游戏"
+        menu = f"\n1. 开始新游戏\n2. 继续游戏 ({note})\n3. 游戏说明  4. 最高分和成就  5. 设置  6. 退出游戏"
         print(menu)
         choice = ask_number("选哪一项? ", 1, 6, idle=title_animation(height + menu.count("\n") + 1))
         if choice == 1:
@@ -4819,6 +5032,8 @@ def main():
         elif choice == 4:
             new_screen()
             show_high_scores()
+            new_screen()   # 第二页是成就
+            show_achievements()
             wait_enter("按回车回到主菜单……")
         elif choice == 5:
             settings_menu()
@@ -4843,6 +5058,7 @@ def play(game):
             show_picture(WIPEOUT_ART, "灰")
             print("\n" + title("结局: 全军覆没", "红"))
             print("所有人都死了。废土上又多了一辆空车……")
+            unlock("前车之鉴")
             break
         if game["distance"] >= TOTAL_DISTANCE:
             ending = arrive(game)
@@ -4870,6 +5086,9 @@ def play(game):
         actions[choice](game)
 
     delete_save()
+    if ending:
+        new_screen()   # 走到了: 先看看拿到了什么新成就 (没有新的就什么都不写)
+        arrival_achievements(game, ending)
     new_screen()   # 看完结局, 再看一遍旅行日记, 最后算分
     show_diary(game)
     if ending:

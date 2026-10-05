@@ -103,6 +103,12 @@ def planner(game_box, screen, month):
             return "2"
         if "走哪条路" in prompt:                  # 达尔斯: 钱够交过路费就走巴洛路, 不够就坐木筏
             return "2" if game["money"] >= w.BARLOW_TOLL else "1"
+        if "怎么过这一带" in prompt:              # 辐射热点: 有人辐射已经不低了、燃料又够多开两天, 就绕过去
+            most = max(game["rads"].get(name, 0) for name in party)
+            fuel_ok = s["燃料"] >= w.next_supply_stop(game)[3] + 2 * w.PACES[game["pace"]][2]
+            return "2" if most >= 35 and fuel_ok else "1"
+        if "走大路还是走捷径" in prompt:          # 南山口: 车上坐满了 (不用去布里杰堡招人)、水也够, 就走捷径
+            return "2" if len(party) >= w.MAX_PARTY and s["水"] >= 10 * len(party) else "1"
         if "往哪边划" in prompt:                  # 急流: 看清楚哪边是水道 (可人手忙脚乱时也会选错, 按 20% 算)
             lanes = re.findall(r"左边(礁石|水道)  中间(礁石|水道)  右边(礁石|水道)", screen.getvalue())[-1]
             want = "礁石" if random.random() < RAPID_MISTAKES and "礁石" in lanes else "水道"
@@ -239,7 +245,7 @@ def novice(game_box, screen, month):
             return "0"
         if "怎么过河" in prompt:                  # 凭感觉: 多半直接开或者浮过去, 有时坐渡船、等一天
             return rng.choice(["1", "1", "2", "2", "3", "4"])
-        if "走哪条路" in prompt:
+        if "走哪条路" in prompt or "怎么过这一带" in prompt or "走大路还是走捷径" in prompt:   # 最后一段路、辐射热点、捷径: 凭感觉选
             return rng.choice(["1", "2"])
         if "往哪边划" in prompt:
             lanes = re.findall(r"左边(礁石|水道)  中间(礁石|水道)  右边(礁石|水道)", screen.getvalue())[-1]
@@ -326,10 +332,11 @@ def main(rounds, who="planner"):
     days = []
     games_by_month = Counter()     # 每个出发月份玩了几局
     arrived_by_month = Counter()   # 其中到达了几局
-    # 存档和最高分榜放到临时文件夹, 不碰玩家真正的存档和最高分
+    # 存档、最高分榜、成就放到临时文件夹, 不碰玩家真正的存档、最高分和成就
     with tempfile.TemporaryDirectory() as tmp, \
             mock.patch.object(w, "SAVE_FILE", os.path.join(tmp, "savegame.json")), \
             mock.patch.object(w, "HIGH_SCORE_FILE", os.path.join(tmp, "highscores.json")), \
+            mock.patch.object(w, "ACHIEVEMENT_FILE", os.path.join(tmp, "achievements.json")), \
             mock.patch.object(w, "SETTINGS_FILE", os.path.join(tmp, "settings.json")):
         for seed in range(rounds):
             text = play_one(seed, who=who)

@@ -104,6 +104,9 @@ class GameTest(unittest.TestCase):
         patcher = mock.patch.object(w, "HIGH_SCORE_FILE", os.path.join(tmp.name, "highscores.json"))
         patcher.start()
         self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(w, "ACHIEVEMENT_FILE", os.path.join(tmp.name, "achievements.json"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         patcher = mock.patch.object(w, "SETTINGS_FILE", os.path.join(tmp.name, "settings.json"))
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -225,7 +228,8 @@ class GameTest(unittest.TestCase):
         all_places = sorted([(km, name) for km, (name, _) in w.LANDMARKS.items()] +
                             [(km, name) for km, (name, _) in w.OUTPOSTS.items()] +
                             [(spot[0], spot[2]) for spot in w.HOTSPOTS])
-        with mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()):
+        road = lambda p="": "1" if "走大路还是走捷径" in p else "2"   # 走大路 (走捷径就不经过布里杰堡)
+        with mock.patch("builtins.input", road), redirect_stdout(io.StringIO()):
             for km in range(0, w.TOTAL_DISTANCE + 1, 50):
                 game["distance"] = km
                 w.check_places(game)
@@ -813,19 +817,112 @@ class GameTest(unittest.TestCase):
                 self.assertEqual(f"{name}辐射偏高, 大家又受了" in screen.getvalue(), bool(expected))
 
     def test_enter_hotspot(self):
-        """开进辐射热点时提醒一次, 记进日记 (按热点开始的地方记)"""
+        """开到辐射热点跟前时提醒一次; 选了直接开过去, 记进日记 (按热点开始的地方记)"""
         start, _, name, _, _, intro = w.HOTSPOTS[0]
         game = new_test_game()
         game["distance"] = start + 10
         game["visited"] = [place for km, (place, _) in list(w.LANDMARKS.items()) + list(w.OUTPOSTS.items())
                            if km <= game["distance"]]
         screen = io.StringIO()
-        with redirect_stdout(screen):
+        with mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(screen):
             w.check_places(game)
             w.check_places(game)
-        self.assertEqual(screen.getvalue().count(f"开进了【{name}】"), 1)
+        self.assertEqual(screen.getvalue().count(f"开到了【{name}】"), 1)
         self.assertIn(intro, screen.getvalue())
         self.assertIn(f"已走 {start} 公里: 开进了{name}, 这一带辐射偏高。", game["diary"][-1])
+        self.assertEqual((game["avoided"], game["detour"]), ([], 0))
+        self.assertEqual(w.hotspot_here(game)[2], name)
+
+    def test_detour_around_hotspot(self):
+        """绕开辐射热点: 先多开 DETOUR_KM 公里 (路程不往前算), 那一带的辐射不用受"""
+        start, end, name, _, _, _ = w.HOTSPOTS[0]
+        game = new_test_game()
+        game["distance"] = start + 10
+        game["visited"] = [place for km, (place, _) in list(w.LANDMARKS.items()) + list(w.OUTPOSTS.items())
+                           if km <= game["distance"]]
+        with mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()):
+            w.check_places(game)
+        # 今天已经往热点里开了 10 公里: 这 10 公里算成绕路, 车退回到热点跟前, 今天不会开到热点里面的地方
+        self.assertEqual((game["avoided"], game["detour"], game["distance"]), ([name], w.DETOUR_KM - 10, start))
+        self.assertIn(f"绕开了{name}", game["diary"][-1])
+        self.assertIsNone(w.hotspot_here(game))   # 在这一段里也不算受辐射
+        self.assertEqual(w.road_left(game, end), end - start + w.DETOUR_KM - 10)
+        with no_new_diseases(), mock.patch.object(w, "roll_weather", lambda game: None), redirect_stdout(io.StringIO()):
+            game["weather"] = "晴"
+            w.pass_day(game)
+        self.assertEqual(set(game["rads"].values()), {0})
+        driven = []
+        with no_new_diseases(), mock.patch.object(w.random, "randint", lambda low, high: 0), \
+                mock.patch.object(w, "roll_weather", lambda game: None), \
+                mock.patch.object(w, "random_event", lambda game, km: driven.append(km)), \
+                mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()):
+            days = 0
+            while game["detour"] or not days:
+                w.drive_one_day(game)   # 晴天中速一天 105 公里: 先开完绕的路, 剩下的才往前算
+                days += 1
+        self.assertEqual(game["detour"], 0)
+        self.assertEqual(game["distance"], start + days * 105 - (w.DETOUR_KM - 10))
+        self.assertEqual(driven, [105] * days)   # 路上出事的机会还是按真的开了多远算
+
+    def test_detour_starts_right_away(self):
+        """选了绕路, 当天就不会再开到热点里面的地方 (爱达荷国家实验室一带里面有霍尔堡)"""
+        start, _, name, _, _, _ = w.HOTSPOTS[1]
+        game = new_test_game()
+        game["distance"] = w.place_km("霍尔堡") + 5   # 今天一口气开过了热点开头和霍尔堡
+        game["visited"] = [place for km, (place, _) in list(w.LANDMARKS.items()) + list(w.OUTPOSTS.items())
+                           if km < start] + [spot[2] for spot in w.HOTSPOTS if spot[0] < start]
+        with mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()) as screen:
+            w.check_places(game)
+        self.assertNotIn("霍尔堡", game["visited"])
+        self.assertNotIn("到了【霍尔堡】", screen.getvalue())
+        self.assertEqual(game["distance"], start)
+
+    def test_sublette_cutoff(self):
+        """过了南山口走萨布莱特捷径: 到格林河以前找不到水 (多喝水), 不经过布里杰堡, 开到布里杰堡那么远时一下子少走 137 公里"""
+        pass_km, river_km, fort_km = (w.place_km(name) for name in [w.CUTOFF_FROM, w.CUTOFF_DRY_UNTIL, w.CUTOFF_SKIPS])
+        game = new_test_game()
+        game["distance"] = pass_km + 5
+        game["visited"] = [place for km, (place, _) in list(w.LANDMARKS.items()) + list(w.OUTPOSTS.items())
+                           if km < pass_km] + [spot[2] for spot in w.HOTSPOTS if spot[0] < pass_km]
+        with mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()) as screen:
+            w.check_places(game)
+        self.assertIn("萨布莱特捷径", screen.getvalue())
+        self.assertEqual(game["cutoff"], 1)
+        self.assertIn(w.CUTOFF_SKIPS, game["visited"])
+        self.assertIn("拐上了萨布莱特捷径", game["diary"][-1])
+        self.assertTrue(w.on_dry_road(game))
+        self.assertEqual(w.daily_need(game)["水"], 4 * (1 + w.DRY_WATER))
+        self.assertNotEqual(w.next_supply_stop(game)[0], w.CUTOFF_SKIPS)   # 下一个能买东西的地方不是布里杰堡
+        self.assertEqual(w.road_left(game, w.TOTAL_DISTANCE), w.TOTAL_DISTANCE - pass_km - 5 - w.CUTOFF_SAVES)
+        water = game["supplies"]["水"]
+        with no_new_diseases(), mock.patch.object(w, "roll_weather", lambda game: None), redirect_stdout(io.StringIO()):
+            game["temperature"] = 20
+            w.pass_day(game)
+        self.assertEqual(water - game["supplies"]["水"], 4 * (1 + w.DRY_WATER))
+        game["distance"] = river_km + 1   # 过了格林河: 又找得到水了
+        self.assertFalse(w.on_dry_road(game))
+        game["distance"] = fort_km - 50
+        game["weather"] = "晴"
+        with no_new_diseases(), mock.patch.object(w.random, "randint", lambda low, high: 0), \
+                mock.patch.object(w, "random_event", lambda game, km: None), \
+                mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()) as screen:
+            w.drive_one_day(game)   # 晴天中速 105 公里, 开过了布里杰堡那么远
+        self.assertEqual(game["cutoff"], 2)
+        self.assertEqual(game["distance"], fort_km - 50 + 105 + w.CUTOFF_SAVES)
+        self.assertIn("走完了萨布莱特捷径", screen.getvalue())
+        self.assertNotIn(f"到了【{w.CUTOFF_SKIPS}】", screen.getvalue())
+
+    def test_main_road_at_south_pass(self):
+        """过了南山口走大路: 跟以前一样, 会经过布里杰堡"""
+        game = new_test_game()
+        game["distance"] = w.place_km(w.CUTOFF_FROM)
+        game["visited"] = [place for km, (place, _) in list(w.LANDMARKS.items()) + list(w.OUTPOSTS.items())
+                           if km < game["distance"]] + [spot[2] for spot in w.HOTSPOTS if spot[0] < game["distance"]]
+        with mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(io.StringIO()):
+            w.check_places(game)
+        self.assertEqual(game["cutoff"], 0)
+        self.assertNotIn(w.CUTOFF_SKIPS, game["visited"])
+        self.assertEqual(w.next_supply_stop(game)[0], w.CUTOFF_SKIPS)
 
     def test_status_shows_hotspot(self):
         """状态栏: 快到辐射热点时提前提醒; 在热点里写着每天受多少辐射、还要开多远才能出去"""
@@ -1436,15 +1533,16 @@ class GameTest(unittest.TestCase):
 
         game["here"], game["distance"] = "卡尼堡", 510
         with redirect_stdout(io.StringIO()) as screen:
-            for _ in range(10):
+            for _ in range(11):
                 w.talk(game)
         text = screen.getvalue()
         for words in ["就是北普拉特河", "收 10 块钱", "再往西到了高平原一带", "下一个能买东西的地方是拉勒米堡",
-                      "就到导弹发射井一带了", "到了达尔斯", "一个在据点门口晒太阳的老人说", "据点里修车的师傅说"]:
+                      "就到导弹发射井一带了", "也可以绕过去", "萨布莱特捷径", "到了达尔斯", "一个在据点门口晒太阳的老人说",
+                      "据点里修车的师傅说"]:
             self.assertIn(words, text)
         self.assertEqual(sum(line in text for line in w.STORY_TALK["东边"]), 2)   # 跟故事有关的话说两句
-        self.assertEqual(text.count("都跟你们说过了"), 1)   # 一共 9 件事, 第 9 次说完提醒一下
-        self.assertEqual(game["talk"], ["卡尼堡", 10])
+        self.assertEqual(text.count("都跟你们说过了"), 1)   # 一共 10 件事, 第 10 次说完提醒一下
+        self.assertEqual(game["talk"], ["卡尼堡", 11])
 
         game["here"], game["distance"] = "达尔斯", 2861   # 过了达尔斯: 没有据点、没有河, 也不用再说最后一段路
         with redirect_stdout(io.StringIO()) as screen:
@@ -2121,6 +2219,58 @@ class GameTest(unittest.TestCase):
         self.assertIn("政府收下了你们", screen.getvalue())
         self.assertIn("政府收下了A、B、C、D", game["diary"][-1])   # 日记里不说「你」, 写名字
 
+    # ---------- 成就 (v4.2) ----------
+
+    def test_unlock_achievement_once(self):
+        """拿到成就: 第一次说一声、记进文件; 再拿到就不说了; 文件坏了当一个都没拿到"""
+        with redirect_stdout(io.StringIO()) as screen:
+            self.assertTrue(w.unlock("神枪手"))
+            self.assertFalse(w.unlock("神枪手"))
+        self.assertEqual(screen.getvalue().count("新成就: 神枪手"), 1)
+        self.assertEqual(w.load_achievements(), ["神枪手"])
+        for text in ["坏了", '{"神枪手": 1}', '["神枪手", "没有这个成就"]']:
+            with open(w.ACHIEVEMENT_FILE, "w", encoding="utf-8") as f:
+                f.write(text)
+            self.assertEqual(w.load_achievements(), ["神枪手"] if text.startswith("[") else [])
+
+    def test_achievements_on_arrival(self):
+        """走到俄勒冈城: 按这一局的情况给成就, 新拿到的写出来"""
+        game = new_test_game()
+        game.update(day=39, difficulty=3, cutoff=2, ferries=0)
+        with redirect_stdout(io.StringIO()) as screen:
+            new = w.arrival_achievements(game, "完美结局")
+        self.assertEqual(new, ["终于到了", "一个都不少", "硬骨头", "快马加鞭", "自己过河", "抄近路"])
+        self.assertIn("新成就", screen.getvalue())
+        game.update(day=60, difficulty=2, cutoff=0, ferries=2)
+        with redirect_stdout(io.StringIO()) as screen:
+            self.assertEqual(w.arrival_achievements(game, "独行结局"), ["独行侠"])   # 拿到过的不再算新的
+
+    def test_achievements_on_the_road(self):
+        """路上的成就: 车上坐满 4 个人、三段热点都绕过去、全军覆没"""
+        game = new_test_game()
+        del game["party"]["D"]
+        with mock.patch("builtins.input", lambda p="": "1"), redirect_stdout(io.StringIO()):
+            w.offer_recruit(game, "卡尼堡")
+        self.assertIn("满员", w.load_achievements())
+        game["avoided"] = [spot[2] for spot in w.HOTSPOTS[:2]]
+        with mock.patch("builtins.input", lambda p="": "2"), redirect_stdout(io.StringIO()):
+            w.choose_hotspot_road(game, w.HOTSPOTS[2][2], w.HOTSPOTS[2][0])
+        self.assertIn("远离辐射", w.load_achievements())
+        game = new_test_game()
+        game["party"] = {}
+        with mock.patch("builtins.input", lambda p="": ""), redirect_stdout(io.StringIO()):
+            w.play(game)
+        self.assertIn("前车之鉴", w.load_achievements())
+
+    def test_ferry_and_rocks_are_counted(self):
+        """坐渡船、木筏撞礁石都记下次数 (成就「自己过河」「激流勇进」要看)"""
+        game = new_test_game()
+        with no_new_diseases(), mock.patch.object(w.random, "randint", lambda low, high: low), \
+                redirect_stdout(io.StringIO()):
+            w.take_ferry(game, "堪萨斯河渡口")
+            w.hit_rock(game)
+        self.assertEqual((game["ferries"], game["rocks"]), (1, 1))
+
     # ---------- 得分和最高分 ----------
 
     def test_score(self):
@@ -2598,7 +2748,8 @@ class GameTest(unittest.TestCase):
             game["distance"] = w.HOTSPOTS[0][0]
             game["visited"] = [name for km, (name, _) in list(w.LANDMARKS.items()) + list(w.OUTPOSTS.items())
                                if km <= w.HOTSPOTS[0][0]]
-            w.check_places(game)                         # 开进辐射热点
+            with mock.patch("builtins.input", lambda p="": "1"):
+                w.check_places(game)                     # 开进辐射热点 (直接开过去)
             w.lose_member(game, "B", "死于痢疾。")
             with mock.patch("builtins.input", lambda p="": "2"):
                 game["distance"] = 999
@@ -2759,7 +2910,7 @@ class GameTest(unittest.TestCase):
         screen = io.StringIO()
         with redirect_stdout(screen):
             height = w.title_screen()
-            menu = "\n1. 开始新游戏\n2. 继续游戏 (没有存档)\n3. 游戏说明  4. 最高分  5. 设置  6. 退出游戏"
+            menu = "\n1. 开始新游戏\n2. 继续游戏 (没有存档)\n3. 游戏说明  4. 最高分和成就  5. 设置  6. 退出游戏"
             print(menu)
             print("选哪一项? ", end="")
         lines = screen.getvalue().split("\n")
@@ -2817,7 +2968,7 @@ class GameTest(unittest.TestCase):
         text = self.run_main(["3", "", "4", "", "6"])   # 游戏说明, 按回车回来, 最高分, 按回车回来, 退出
         for words in ["废  土  之  旅", "W A S T E L A N D", w.VERSION, "1. 开始新游戏",
                       "2. 继续游戏 (没有存档)", "游戏说明", "排辐剂", "辐射偏高", "难度在主菜单的「设置」里选",
-                      "困难 ×1.5", "4. 最高分", "还没有人走到", "下次再见"]:
+                      "困难 ×1.5", "4. 最高分和成就", "还没有人走到", "成就 (拿到了 0 个", "☆ 终于到了", "下次再见"]:
             self.assertIn(words, text)
 
     def test_settings(self):

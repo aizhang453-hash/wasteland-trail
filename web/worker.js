@@ -13,7 +13,7 @@ let huntRead = 0;   // 打猎的事, 已经交给游戏几件了
 const sleeper = new Int32Array(new SharedArrayBuffer(4));   // 专门用来「停一会儿」的一小块内存
 
 self.onmessage = async (event) => {
-  const { inputMemory, flagsMemory, savedGame, savedScores, savedSettings } = event.data;
+  const { inputMemory, flagsMemory, savedGame, savedScores, savedSettings, savedAchievements } = event.data;
   control = new Int32Array(inputMemory, 0, 2);
   letters = new Uint8Array(inputMemory, 8);
   flags = flagsMemory ? new Int32Array(flagsMemory) : null;
@@ -36,6 +36,7 @@ self.onmessage = async (event) => {
   self.saveToPage = (text) => postMessage({ type: "save", text: text });
   self.saveScoresToPage = (text) => postMessage({ type: "scores", text: text });
   self.settingsToPage = (text) => postMessage({ type: "settings", text: text });   // 主菜单「设置」里改的
+  self.achievementsToPage = (text) => postMessage({ type: "achievements", text: text });   // 拿到过的成就
   self.musicToPage = (text) => postMessage({ type: "music", text: text });
   self.loopToPage = (text) => postMessage({ type: "loop", text: text });
   self.stopRequested = () => (flags ? Atomics.exchange(flags, 0, 0) : 0);   // 看一眼要不要停, 顺便清掉
@@ -66,6 +67,9 @@ self.onmessage = async (event) => {
   }
   if (savedSettings) {
     pyodide.FS.writeFile("/home/pyodide/settings.json", savedSettings);
+  }
+  if (savedAchievements) {
+    pyodide.FS.writeFile("/home/pyodide/achievements.json", savedAchievements);
   }
 
   postMessage({ type: "status", text: "" });

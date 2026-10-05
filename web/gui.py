@@ -103,7 +103,11 @@ def game_state(w, game):
     if spot:
         notes.append(["紫", f"在{spot[2]}, 辐射偏高"])
     elif ahead and ahead[0] - game["distance"] <= w.HOTSPOT_WARNING:
-        notes.append(["紫", f"再开 {w.show_distance(game, ahead[0] - game['distance'])}就到{ahead[2]}, 辐射偏高"])
+        notes.append(["紫", f"再开 {w.show_distance(game, w.road_left(game, ahead[0]))}就到{ahead[2]}, 辐射偏高"])
+    if game["detour"]:
+        notes.append(["紫", f"在绕路: 还要多开 {w.show_distance(game, game['detour'])}"])
+    if w.on_dry_road(game):
+        notes.append(["黄", f"捷径上找不到水, 每人每天多喝 {w.DRY_WATER} 份"])
     if s["食物"] == 0:
         notes.append(["红", "没吃的了"])
     if s["水"] == 0:
@@ -141,8 +145,8 @@ def game_state(w, game):
         "temperatureColor": w.temperature_color(temperature),
         "km": game["distance"], "total": w.TOTAL_DISTANCE,
         "traveled": w.show_distance(game, game["distance"]),
-        "left": w.show_distance(game, w.TOTAL_DISTANCE - game["distance"]),
-        "next": {"name": name, "kind": kind, "distance": w.show_distance(game, km - game["distance"])},
+        "left": w.show_distance(game, w.road_left(game, w.TOTAL_DISTANCE)),
+        "next": {"name": name, "kind": kind, "distance": w.show_distance(game, w.road_left(game, km))},
         "supplies": supplies, "money": game["money"],
         "load": w.show_weight(game, w.load_of(game)), "capacity": w.show_weight(game, w.CAR_CAPACITY),
         "loadPercent": min(100, w.load_of(game) * 100 // w.CAR_CAPACITY),

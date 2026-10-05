@@ -31,7 +31,9 @@ class GuiTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         for name, value in [("can_read_keys", lambda: False),
                             ("SAVE_FILE", os.path.join(tmp.name, "savegame.json")),
-                            ("HIGH_SCORE_FILE", os.path.join(tmp.name, "highscores.json"))]:
+                            ("HIGH_SCORE_FILE", os.path.join(tmp.name, "highscores.json")),
+                            ("ACHIEVEMENT_FILE", os.path.join(tmp.name, "achievements.json")),
+                            ("SETTINGS_FILE", os.path.join(tmp.name, "settings.json"))]:
             patcher = mock.patch.object(w, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
