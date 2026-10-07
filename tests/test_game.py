@@ -1325,7 +1325,8 @@ class GameTest(unittest.TestCase):
         game = new_test_game()
         game["supplies"]["食物"] = 0
         game["supplies"]["子弹"] = 50
-        with mock.patch.multiple(w, can_aim=lambda: True, hunt_keys=hunter_bot([game])), \
+        # 不让人在打猎那天随机病倒 (不然日记最后一条是「得了痢疾」, 测试偶尔失败)
+        with mock.patch.multiple(w, can_aim=lambda: True, hunt_keys=hunter_bot([game])), no_new_diseases(), \
                 mock.patch("builtins.input", lambda p="": ""), redirect_stdout(io.StringIO()) as screen:
             w.hunt(game)
         text = screen.getvalue()

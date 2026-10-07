@@ -61,13 +61,14 @@
     }
     #actionsbox { grid-area: actions; }
     #app[data-tab] #actionsbox { display: flex; }
-    #app[data-tab="actions"] #statusbox { display: flex; }   /* 有问题要回答 (切到了「操作」) 的时候, 右边还是看状态 */
-    #tabs { grid-template-columns: repeat(3, 1fr); }
+    #app[data-tab="actions"] #statusbox { display: flex; }   /* 一开始 (还在「操作」) 右边看状态 */
+    #app #tabs { grid-template-columns: repeat(3, 1fr); }
     #tabs button[data-tab="actions"] { display: none; }
   }
 
-  /* 手机横着拿: 左边屏幕, 右边面板 (按钮小一点) */
-  @media (orientation: landscape) and (max-height: 560px) {
+  /* 手机横着拿 (还有电脑上没放大的窄窗口): 左边屏幕, 右边面板 (按钮小一点)。宽 900 以上、高 480 以上的是笔记本 (见下面「笔记本」)
+     下面几处写 #app #choices 这样, 是为了比后面「按钮」那几节的写法优先, 不然会被盖掉 */
+  @media (orientation: landscape) and (max-width: 899px), (orientation: landscape) and (max-height: 479px) {
     #app {
       grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
       grid-template-rows: auto minmax(0, 1fr) auto;
@@ -76,10 +77,10 @@
       gap: 4px;
     }
     .panel > h2 { display: none; }
-    #choices { grid-template-columns: repeat(auto-fill, minmax(7em, 1fr)); gap: 4px; }
-    #choices button.choice { min-height: 32px; padding: 3px 6px; font-size: 13px; gap: 5px; }
+    #app #choices { grid-template-columns: repeat(auto-fill, minmax(7em, 1fr)); gap: 4px; }
+    #app #choices button.choice { min-height: 32px; padding: 3px 6px; font-size: 13px; gap: 5px; }
     #choices .icon { display: none; }
-    #tabs button { padding: 5px 0; font-size: 13px; }
+    #app #tabs button { padding: 5px 0; font-size: 13px; }
   }
 
   /* 电脑、平板横着拿: 左边按钮, 中间屏幕和地图, 右边状态和旅行日记 */
@@ -95,6 +96,31 @@
     #logbox { grid-area: log; }
     #app[data-tab] #actionsbox, #app[data-tab] #statusbox, #app[data-tab] #mapbox, #app[data-tab] #logbox { display: flex; }
     #app #tabs { display: none; }
+  }
+
+  /* 笔记本: 宽, 可是不到 600 高 (比如 Windows 把 1920x1080 的屏幕放大到 150%, 网页只有大约 1280x570)。
+     左边按钮 (排成两列, 不用往下翻), 中间屏幕占满整个高度 (字才不会太小), 右边用标签换状态、地图、日记。
+     屏幕的字号是被高度卡住的, 横着有空地方, 所以左边一栏比电脑上宽 */
+  @media (min-width: 900px) and (min-height: 480px) and (max-height: 599px) {
+    #app {
+      grid-template-columns: minmax(260px, 280px) minmax(0, 1fr) minmax(240px, 260px);
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-areas: "title title title" "actions view panel" "actions view tabs";
+    }
+    #actionsbox { grid-area: actions; }
+    #app[data-tab] #actionsbox { display: flex; }
+    #app[data-tab="actions"] #statusbox { display: flex; }   /* 一开始 (还在「操作」) 右边看状态 */
+    .panel > h2 { display: none; }
+    #app #choices { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+    #app #choices button.choice { min-height: 36px; padding: 4px 5px; font-size: 14px; gap: 4px; }
+    #app #choices .icon { font-size: 16px; }
+    #app #tabs { grid-template-columns: repeat(3, 1fr); }
+    #app #tabs button { padding: 5px 0; font-size: 13px; }
+    #tabs button[data-tab="actions"] { display: none; }
+  }
+  /* 平板竖着拿、笔记本: 「操作」的标签藏起来了, 右边在看状态的时候点亮「状态」 */
+  @media (min-width: 600px) and (max-width: 899px) and (orientation: portrait), (min-width: 900px) and (min-height: 480px) and (max-height: 599px) {
+    #app[data-tab="actions"] #tabs button[data-tab="status"] { color: var(--bg); background: var(--fg); }
   }
 
   .panel {
@@ -182,8 +208,8 @@
     gap: 6px;
     grid-template-columns: repeat(auto-fill, minmax(8.5em, 1fr));
   }
-  @media (min-width: 900px) and (min-height: 600px) {
-    #choices { grid-template-columns: 1fr; }   /* 电脑上按钮在左边一列, 一个一个往下排 */
+  @media (min-width: 900px) and (min-height: 480px) {
+    #choices { grid-template-columns: 1fr; }   /* 电脑、笔记本上按钮在左边一列, 一个一个往下排 */
   }
   #choices button.choice {
     display: flex;
@@ -515,7 +541,8 @@
   // ---------- 字号: 跟着屏幕那块地方的大小变 ----------
   // 一行要放得下最宽的字符画 (60 个英文字), 一屏至少要看得到 SCREEN_ROWS 行 (动画加上下面几行字), 在这个范围里尽量大
   const SCREEN_COLUMNS = 61;   // 多留一格, 免得刚好卡在边上
-  const SCREEN_ROWS = 24;      // 电脑、平板横着拿
+  const SCREEN_ROWS = 24;      // 电脑、笔记本、平板横着拿 (屏幕在中间, 上面 CSS 的那两种摆法)
+  const BIG_LAYOUT = "(min-width: 900px) and (min-height: 480px)";
   const SMALL_SCREEN_ROWS = 18;   // 手机、平板竖着拿: 下面的面板占了地方, 少看几行 (多了就往上滚), 字别太小
   const MIN_FONT = 8;
   const MAX_FONT = 26;
@@ -538,7 +565,7 @@
     const height = screenBox.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
     if (width <= 0 || height <= 0) return;
     const letter = letterWidth();
-    const rows = window.matchMedia("(min-width: 900px) and (min-height: 600px)").matches ? SCREEN_ROWS : SMALL_SCREEN_ROWS;
+    const rows = window.matchMedia(BIG_LAYOUT).matches ? SCREEN_ROWS : SMALL_SCREEN_ROWS;
     const size = Math.max(MIN_FONT, Math.min(MAX_FONT, width / (SCREEN_COLUMNS * letter), height / (rows * LINE_HEIGHT)));
     screenBox.style.fontSize = size.toFixed(1) + "px";
     screenBox.scrollTop = screenBox.scrollHeight;   // 字变了大小, 还是停在最下面
@@ -784,11 +811,11 @@
       renderLog();
     } else if (message.what === "question") {
       question = message.question;
-      if (question) showTab("actions");
+      if (question) showActions();
       renderActions();
     } else if (message.what === "driving") {
       driving = message.driving;
-      if (driving) showTab("actions");
+      if (driving) showActions();
       renderActions();
       renderStatus();
     }
@@ -876,6 +903,10 @@
     if (name === "log") scrollLog();
   }
   for (const button of tabButtons) button.addEventListener("click", () => showTab(button.dataset.tab));
+  // 有新问题、车开起来的时候切到「操作」。平板竖着拿、笔记本上按钮一直在左边 (「操作」的标签藏起来了), 就不切, 右边留着玩家自己选的
+  function showActions() {
+    if (document.querySelector('#tabs button[data-tab="actions"]').offsetParent !== null) showTab("actions");
+  }
   showTab("actions");
 
   // 「状态」面板
